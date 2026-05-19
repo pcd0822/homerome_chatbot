@@ -3,16 +3,10 @@ import StudentLoginModal from '@/components/StudentLoginModal'
 import Sidebar from '@/components/Sidebar'
 import ChatArea from '@/components/ChatArea'
 import { storage, newId } from '@/lib/storage'
-import {
-  getEnvApiKeys,
-  getEnvDriveConfig,
-  getEnvMcpConfig,
-  getEnvNotionPageUrl,
-} from '@/lib/env'
+import { getEnvApiKeys, getEnvDriveConfig } from '@/lib/env'
 import { getClassLabel } from '@/lib/roster'
 import {
   DEFAULT_SYSTEM_PROMPT,
-  buildNotionAutoSearchHint,
   hasKey,
   pickInitialProvider,
   sendMessage,
@@ -35,16 +29,13 @@ function truncateTitle(text: string): string {
 }
 
 interface SendOptions {
-  mcpEnabled?: boolean
   useDriveContext?: boolean
 }
 
 export default function App() {
   // 환경 변수에서 한 번만 읽는다. 학생 PC에는 키가 저장되지 않는다.
   const apiKeys = useMemo(() => getEnvApiKeys(), [])
-  const mcpConfig = useMemo(() => getEnvMcpConfig(), [])
   const driveConfig = useMemo(() => getEnvDriveConfig(), [])
-  const notionPageUrl = useMemo(() => getEnvNotionPageUrl(), [])
 
   const [student, setStudent] = useState<Student | null>(null)
   const [hydrated, setHydrated] = useState(false)
@@ -187,15 +178,9 @@ export default function App() {
     )
     persistConversations(student.studentId, working)
 
-    // Claude 모델 + 노션 설정 있으면 모든 메시지에서 노션 도구 자동 활성화
-    // (스타터에서 명시한 옵션이 우선)
-    const autoNotion =
-      selectedProvider === 'claude' && Boolean(mcpConfig.notion)
-    const mcpEnabled = options.mcpEnabled ?? autoNotion
-
     setIsPending(true)
     try {
-      // 1) Drive 컨텍스트 수집 (요청이 있고 설정이 있을 때만)
+      // Drive 컨텍스트 수집 (요청이 있고 설정이 있을 때만)
       let driveSystemAddon = ''
       let pdfAttachments: PdfAttachment[] | undefined
       if (options.useDriveContext) {
@@ -213,12 +198,10 @@ export default function App() {
           console.info('[drive] fetchDriveContext 시작', {
             folderId: driveConfig.folderId,
             clientEmail: driveConfig.clientEmail,
-            privateKeyHead: driveConfig.privateKey.slice(0, 30),
           })
           try {
             const onClaude = selectedProvider === 'claude'
             const ctx = await fetchDriveContext(driveConfig, {
-              // Claude일 때만 PDF 첨부, 다른 모델은 목록만
               maxPdfCount: onClaude ? 5 : 0,
               maxTotalBytes: 10 * 1024 * 1024,
             })
@@ -238,8 +221,7 @@ export default function App() {
                 title: a.file.name,
                 base64: a.base64,
               }))
-              driveSystemAddon +=
-                `\n\n위 PDF ${ctx.attachments.length}개는 이번 메시지에 실제 첨부되었으니 내용을 직접 인용/요약해 답해도 됩니다.`
+              driveSystemAddon += `\n\n위 PDF ${ctx.attachments.length}개는 이번 메시지에 실제 첨부되었으니 내용을 직접 인용/요약해 답해도 됩니다.`
             } else if (!onClaude) {
               driveSystemAddon +=
                 '\n\n(PDF 내용 직접 첨부는 Claude 모델에서만 가능합니다. 지금은 파일 목록만 활용해 안내해 주세요.)'
@@ -259,19 +241,14 @@ export default function App() {
         }
       }
 
-      // 2) LLM 호출
+      // LLM 호출
       const apiKey = apiKeys[selectedProvider]!
       const conv = working.find((c) => c.id === convId)!
-      const notionHint = mcpEnabled
-        ? buildNotionAutoSearchHint(notionPageUrl)
-        : ''
       const res = await sendMessage({
         provider: selectedProvider,
         apiKey,
         messages: conv.messages,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveSystemAddon + notionHint,
-        mcpEnabled,
-        mcpConfig: mcpEnabled ? mcpConfig : undefined,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveSystemAddon,
         pdfAttachments,
       })
 
@@ -315,17 +292,7 @@ export default function App() {
   }
 
   function handlePickStarter(s: Starter) {
-    if (s.requiresMcp && selectedProvider !== 'claude') {
-      const ok = confirm(
-        'MCP 도구(노션)는 Claude 모델에서만 동작해요. ' +
-          '지금 선택된 모델은 도구 없이 일반 답변을 드립니다. 계속할까요?',
-      )
-      if (!ok) return
-    }
-    void handleSend(s.prompt, {
-      mcpEnabled: s.requiresMcp,
-      useDriveContext: s.requiresDrive ?? false,
-    })
+    void handleSend(s.prompt, { useDriveContext: s.requiresDrive ?? false })
   }
 
   if (!hydrated) {

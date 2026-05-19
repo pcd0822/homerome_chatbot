@@ -1,18 +1,13 @@
-// 환경 변수에서 LLM 키 / 노션 MCP / Drive 서비스 계정 설정을 읽어오는 래퍼.
+// 환경 변수에서 LLM 키 / Drive 서비스 계정 설정을 읽어오는 래퍼.
 // 사용자(학생)는 어떤 비밀도 입력하지 않는다. 빌드 시점에 .env(로컬) 또는
 // Netlify Environment variables 에서 인라인된 값만 사용한다.
 
-import type {
-  ApiKeys,
-  DriveServiceAccountConfig,
-  McpConfig,
-} from '@/types'
+import type { ApiKeys, DriveServiceAccountConfig } from '@/types'
 
 function read(value: string | undefined): string {
   if (typeof value !== 'string') return ''
   let v = value.trim()
   // dotenv 가 처리 못 한 양쪽 따옴표가 남아 있으면 한 번 더 벗긴다.
-  // (사용자가 .env 에 따옴표를 이중으로 넣었거나, 빌드 도구가 그대로 둔 경우)
   if (
     (v.startsWith('"') && v.endsWith('"')) ||
     (v.startsWith("'") && v.endsWith("'"))
@@ -33,23 +28,7 @@ export function getEnvApiKeys(): ApiKeys {
   return keys
 }
 
-export function getEnvMcpConfig(): McpConfig {
-  const cfg: McpConfig = {}
-  const notionUrl = read(import.meta.env.VITE_NOTION_MCP_URL)
-  const notionToken = read(import.meta.env.VITE_NOTION_MCP_TOKEN)
-  if (notionUrl && notionToken) {
-    cfg.notion = { url: notionUrl, token: notionToken }
-  }
-  return cfg
-}
-
-// 학급 노션 메인 페이지 URL (선택). 시스템 프롬프트에서 Claude 에게 우선 참고할 페이지로 안내.
-export function getEnvNotionPageUrl(): string {
-  return read(import.meta.env.VITE_NOTION_PAGE_URL)
-}
-
 function normalizeNewlines(key: string): string {
-  // 이스케이프된 줄바꿈을 실제 줄바꿈으로. 큰따옴표 환경 변수에서는 이미 변환됐을 수 있음(no-op).
   return key
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n')
@@ -58,7 +37,6 @@ function normalizeNewlines(key: string): string {
 }
 
 // PRIVATE_KEY 자리에 서비스 계정 JSON 전체를 통째로 붙여넣은 경우도 자동 처리한다.
-// JSON 파싱 성공 시 private_key / client_email 필드를 꺼내 쓴다.
 interface ServiceAccountJsonShape {
   private_key?: string
   client_email?: string
@@ -94,7 +72,6 @@ export function getEnvDriveConfig(): DriveServiceAccountConfig | null {
       clientEmail = parsed.client_email.trim()
     }
   } else {
-    // 케이스 2: 원래 의도대로 PEM 만 들어온 경우
     privateKey = normalizeNewlines(privateKeyRaw)
   }
 

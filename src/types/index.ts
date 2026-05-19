@@ -42,16 +42,7 @@ export interface ApiKeys {
   gemini?: string
 }
 
-export interface McpServerConfig {
-  url: string
-  token: string
-}
-
-export interface McpConfig {
-  notion?: McpServerConfig
-}
-
-// Google Drive 는 MCP 서버를 거치지 않고 서비스 계정으로 직접 호출한다.
+// Google Drive 는 서비스 계정으로 직접 호출한다.
 // 학급 자료를 둘 폴더(folderId)에 서비스 계정 email 을 뷰어로 공유.
 export interface DriveServiceAccountConfig {
   clientEmail: string
@@ -64,9 +55,7 @@ export interface Starter {
   emoji: string
   label: string
   prompt: string
-  /** 노션 MCP 도구가 필요(Claude 모델에서만 동작) */
-  requiresMcp: boolean
-  /** Google Drive 학급 폴더 자료 조회/첨부가 필요 */
+  /** Google Drive 학급 폴더 자료 조회/첨부가 필요한지 */
   requiresDrive?: boolean
 }
 

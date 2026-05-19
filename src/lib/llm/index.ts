@@ -1,8 +1,6 @@
 // 모델 제공자에 무관한 sendMessage 통합 인터페이스.
-// MCP는 Claude만 네이티브 지원 → OpenAI/Gemini로 mcpEnabled 요청 시
-// 안내 문구를 prepend한 일반 응답을 반환한다(명세 2.3).
 
-import type { ApiKeys, LlmProvider, McpConfig, Message } from '@/types'
+import type { ApiKeys, LlmProvider, Message } from '@/types'
 import { callClaude } from './claude'
 import { callOpenAI } from './openai'
 import { callGemini } from './gemini'
@@ -13,8 +11,6 @@ export interface SendMessageInput {
   apiKey: string
   messages: Message[]
   systemPrompt?: string
-  mcpEnabled?: boolean
-  mcpConfig?: McpConfig
   /** Claude 모델일 때만 효과. 다른 모델은 무시된다. */
   pdfAttachments?: PdfAttachment[]
 }
@@ -23,29 +19,16 @@ export interface SendMessageOutput {
   content: string
 }
 
-const NON_CLAUDE_MCP_NOTICE =
-  '⚠️ MCP 도구(노션/Drive 조회)는 Claude 모델에서만 사용 가능합니다. ' +
-  '좌측 사이드바에서 Claude로 변경한 뒤 다시 시도해 보세요.\n\n' +
-  '아래는 도구 없이 드리는 일반 답변입니다.\n\n'
-
 export async function sendMessage(
   input: SendMessageInput,
 ): Promise<SendMessageOutput> {
   switch (input.provider) {
     case 'claude':
       return callClaude(input)
-    case 'openai': {
-      const r = await callOpenAI(input)
-      return input.mcpEnabled
-        ? { content: NON_CLAUDE_MCP_NOTICE + r.content }
-        : r
-    }
-    case 'gemini': {
-      const r = await callGemini(input)
-      return input.mcpEnabled
-        ? { content: NON_CLAUDE_MCP_NOTICE + r.content }
-        : r
-    }
+    case 'openai':
+      return callOpenAI(input)
+    case 'gemini':
+      return callGemini(input)
   }
 }
 
@@ -68,27 +51,5 @@ export const DEFAULT_SYSTEM_PROMPT =
   '당신은 중학교 학급에서 학생들의 학습을 돕는 친절한 챗봇입니다. ' +
   '항상 한국어로 답하고, 중학생 수준에 맞는 쉬운 설명을 사용하세요. ' +
   '욕설/개인정보/시험 부정행위 요청에는 응하지 말고 정중히 거절하세요.'
-
-// Claude 모델에 노션 도구가 연결되었을 때, 학생이 "노션"이라는 단어를 쓰지 않아도
-// 학급 관련 질문이면 알아서 노션을 검색하도록 유도하는 시스템 프롬프트 보강.
-export function buildNotionAutoSearchHint(notionPageUrl: string): string {
-  const pageLine = notionPageUrl
-    ? `\n- 학급 메인 페이지: ${notionPageUrl}`
-    : ''
-  return (
-    '\n\n## 학급 노션 자료 자동 활용 (도구 이름: notion)\n' +
-    '당신은 학급 노션 페이지에 접근할 수 있는 검색·읽기 도구가 있습니다.' +
-    pageLine +
-    '\n학생이 "노션" 이라는 단어를 직접 쓰지 않더라도, 다음과 같은 질문이면 ' +
-    '먼저 노션 도구로 학급 페이지를 검색·조회해 정확한 정보를 가져온 뒤 답하세요:\n' +
-    '- 공지사항, 알림, 시간표, 일정, 행사, 변동사항\n' +
-    '- 과제, 수행평가, 시험 범위, 제출 마감\n' +
-    '- 학급 규칙, 자리 배치, 청소 당번, 봉사활동\n' +
-    '- 담임 선생님 말씀, 가정통신문, 상담 안내\n' +
-    '\n학급과 무관한 일반 학습 질문(수학 풀이, 영어 문법 등)에는 ' +
-    '도구를 호출하지 말고 바로 답하세요. 자료를 찾지 못한 경우 ' +
-    '"노션 페이지에서 해당 내용을 찾지 못했어요. 선생님께 직접 여쭤보세요" 라고 안내하세요.'
-  )
-}
 
 export type { PdfAttachment } from './types'
