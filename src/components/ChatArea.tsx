@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import MessageBubble from './MessageBubble'
 import ConversationStarters from './ConversationStarters'
+import { getVocativeName } from '@/lib/roster'
 import type { Message, Starter, Student } from '@/types'
 
 interface Props {
@@ -49,11 +50,11 @@ export default function ChatArea({
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="text-3xl">👋</div>
             <h2 className="mt-3 text-xl font-bold text-slate-800">
-              {student.name} 학생, 환영합니다
+              안녕 {getVocativeName(student.name)}!
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              궁금한 것을 자유롭게 물어보세요. 아래 버튼으로 자주 쓰는 도움도
-              한 번에 받을 수 있어요.
+              궁금한 게 있으면 편하게 물어봐. 아래 버튼으로 자주 쓰는 도움도
+              바로 받을 수 있어.
             </p>
             <ConversationStarters onPick={onPickStarter} disabled={isPending} />
           </div>
