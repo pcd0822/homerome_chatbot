@@ -1,0 +1,32 @@
+{
+  "starters": [
+    {
+      "id": "notice",
+      "emoji": "📋",
+      "label": "우리 반 공지사항",
+      "prompt": "우리 반 노션 페이지에서 가장 최근 공지사항 3건을 요약해서 알려줘.",
+      "requiresMcp": true
+    },
+    {
+      "id": "assignments",
+      "emoji": "📝",
+      "label": "이번 주 과제",
+      "prompt": "이번 주 과제를 노션 페이지에서 찾아 마감일과 함께 정리해줘.",
+      "requiresMcp": true
+    },
+    {
+      "id": "evalplan",
+      "emoji": "📚",
+      "label": "평가계획서 보기",
+      "prompt": "Google Drive에 있는 평가계획서 PDF를 찾아 과목별로 핵심 내용을 요약해줘.",
+      "requiresMcp": true
+    },
+    {
+      "id": "research",
+      "emoji": "🔍",
+      "label": "탐구활동 자료",
+      "prompt": "Google Drive 탐구활동 폴더의 자료 목록과 각각 어떤 내용인지 알려줘.",
+      "requiresMcp": true
+    }
+  ]
+}

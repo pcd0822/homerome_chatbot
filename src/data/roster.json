@@ -1,0 +1,10 @@
+{
+  "classInfo": { "grade": 3, "classNum": 2, "year": 2026 },
+  "students": [
+    { "studentId": "30201", "name": "김민지" },
+    { "studentId": "30202", "name": "이서준" },
+    { "studentId": "30203", "name": "박지우" },
+    { "studentId": "30204", "name": "최도윤" },
+    { "studentId": "30205", "name": "윤하린" }
+  ]
+}

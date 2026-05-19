@@ -1,0 +1,13 @@
+# Netlify 배포 설정.
+# 환경 변수(VITE_*) 는 Site settings → Environment variables 에 등록하세요.
+# 이 파일은 빌드 명령과 SPA 리다이렉트만 정의합니다.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Vite 산출물은 SPA. 모든 경로를 index.html 로 폴백.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
