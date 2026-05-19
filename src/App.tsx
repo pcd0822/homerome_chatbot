@@ -3,14 +3,16 @@ import StudentLoginModal from '@/components/StudentLoginModal'
 import Sidebar from '@/components/Sidebar'
 import ChatArea from '@/components/ChatArea'
 import { storage, newId } from '@/lib/storage'
-import { getEnvApiKeys, getEnvMcpConfig } from '@/lib/env'
+import { getEnvApiKeys, getEnvDriveConfig, getEnvMcpConfig } from '@/lib/env'
 import { getClassLabel } from '@/lib/roster'
 import {
   DEFAULT_SYSTEM_PROMPT,
   hasKey,
   pickInitialProvider,
   sendMessage,
+  type PdfAttachment,
 } from '@/lib/llm'
+import { fetchDriveContext, formatDriveFilesAsContext } from '@/lib/drive'
 import { PROVIDER_LABEL } from '@/types'
 import type {
   Conversation,
@@ -26,10 +28,16 @@ function truncateTitle(text: string): string {
   return trimmed.slice(0, 20) + '…'
 }
 
+interface SendOptions {
+  mcpEnabled?: boolean
+  useDriveContext?: boolean
+}
+
 export default function App() {
   // 환경 변수에서 한 번만 읽는다. 학생 PC에는 키가 저장되지 않는다.
   const apiKeys = useMemo(() => getEnvApiKeys(), [])
   const mcpConfig = useMemo(() => getEnvMcpConfig(), [])
+  const driveConfig = useMemo(() => getEnvDriveConfig(), [])
 
   const [student, setStudent] = useState<Student | null>(null)
   const [hydrated, setHydrated] = useState(false)
@@ -136,7 +144,7 @@ export default function App() {
     storage.setSelectedProvider(p)
   }
 
-  async function handleSend(content: string, mcpEnabled = false) {
+  async function handleSend(content: string, options: SendOptions = {}) {
     if (!student || isPending) return
     if (!selectedProvider || !hasKey(apiKeys, selectedProvider)) {
       alert('사용 가능한 LLM 키가 없습니다. 교사/운영자에게 문의하세요.')
@@ -174,16 +182,61 @@ export default function App() {
 
     setIsPending(true)
     try {
+      // 1) Drive 컨텍스트 수집 (요청이 있고 설정이 있을 때만)
+      let driveSystemAddon = ''
+      let pdfAttachments: PdfAttachment[] | undefined
+      if (options.useDriveContext) {
+        if (!driveConfig) {
+          driveSystemAddon =
+            '\n\n[안내] Google Drive 학급 폴더가 아직 설정되지 않았습니다. ' +
+            '교사/운영자가 환경 변수를 등록해야 자료를 조회할 수 있어요.'
+        } else {
+          try {
+            const onClaude = selectedProvider === 'claude'
+            const ctx = await fetchDriveContext(driveConfig, {
+              // Claude일 때만 PDF 첨부, 다른 모델은 목록만
+              maxPdfCount: onClaude ? 5 : 0,
+              maxTotalBytes: 10 * 1024 * 1024,
+            })
+            const listText = formatDriveFilesAsContext(ctx.allFiles)
+            driveSystemAddon = `\n\n## Google Drive 학급 폴더 파일 목록\n${listText}`
+            if (onClaude && ctx.attachments.length > 0) {
+              pdfAttachments = ctx.attachments.map((a) => ({
+                title: a.file.name,
+                base64: a.base64,
+              }))
+              driveSystemAddon +=
+                `\n\n위 PDF ${ctx.attachments.length}개는 이번 메시지에 실제 첨부되었으니 내용을 직접 인용/요약해 답해도 됩니다.`
+            } else if (!onClaude) {
+              driveSystemAddon +=
+                '\n\n(PDF 내용 직접 첨부는 Claude 모델에서만 가능합니다. 지금은 파일 목록만 활용해 안내해 주세요.)'
+            }
+            if (ctx.skipped.length > 0) {
+              const skipNames = ctx.skipped
+                .map((s) => `"${s.file.name}"(${s.reason})`)
+                .join(', ')
+              driveSystemAddon += `\n\n첨부에서 제외된 파일: ${skipNames}`
+            }
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err)
+            driveSystemAddon = `\n\n[Drive 조회 실패] ${reason}`
+          }
+        }
+      }
+
+      // 2) LLM 호출
       const apiKey = apiKeys[selectedProvider]!
       const conv = working.find((c) => c.id === convId)!
       const res = await sendMessage({
         provider: selectedProvider,
         apiKey,
         messages: conv.messages,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT,
-        mcpEnabled,
-        mcpConfig: mcpEnabled ? mcpConfig : undefined,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveSystemAddon,
+        mcpEnabled: options.mcpEnabled,
+        mcpConfig: options.mcpEnabled ? mcpConfig : undefined,
+        pdfAttachments,
       })
+
       const assistantMsg: Message = {
         id: newId(),
         role: 'assistant',
@@ -226,12 +279,15 @@ export default function App() {
   function handlePickStarter(s: Starter) {
     if (s.requiresMcp && selectedProvider !== 'claude') {
       const ok = confirm(
-        'MCP 도구(노션/Drive 조회)는 Claude 모델에서만 동작해요. ' +
+        'MCP 도구(노션)는 Claude 모델에서만 동작해요. ' +
           '지금 선택된 모델은 도구 없이 일반 답변을 드립니다. 계속할까요?',
       )
       if (!ok) return
     }
-    void handleSend(s.prompt, s.requiresMcp)
+    void handleSend(s.prompt, {
+      mcpEnabled: s.requiresMcp,
+      useDriveContext: s.requiresDrive ?? false,
+    })
   }
 
   if (!hydrated) {

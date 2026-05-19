@@ -6,6 +6,7 @@ import type { ApiKeys, LlmProvider, McpConfig, Message } from '@/types'
 import { callClaude } from './claude'
 import { callOpenAI } from './openai'
 import { callGemini } from './gemini'
+import type { PdfAttachment } from './types'
 
 export interface SendMessageInput {
   provider: LlmProvider
@@ -14,6 +15,8 @@ export interface SendMessageInput {
   systemPrompt?: string
   mcpEnabled?: boolean
   mcpConfig?: McpConfig
+  /** Claude 모델일 때만 효과. 다른 모델은 무시된다. */
+  pdfAttachments?: PdfAttachment[]
 }
 
 export interface SendMessageOutput {
@@ -65,3 +68,5 @@ export const DEFAULT_SYSTEM_PROMPT =
   '당신은 중학교 학급에서 학생들의 학습을 돕는 친절한 챗봇입니다. ' +
   '항상 한국어로 답하고, 중학생 수준에 맞는 쉬운 설명을 사용하세요. ' +
   '욕설/개인정보/시험 부정행위 요청에는 응하지 말고 정중히 거절하세요.'
+
+export type { PdfAttachment } from './types'

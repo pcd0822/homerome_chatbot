@@ -44,11 +44,12 @@ VITE_GEMINI_API_KEY=...
 
 # 노션 MCP
 VITE_NOTION_MCP_URL=https://mcp.notion.com/mcp
-VITE_NOTION_MCP_TOKEN=secret_...
+VITE_NOTION_MCP_TOKEN=...
 
-# Google Drive MCP (운영자가 제공하는 엔드포인트)
-VITE_GOOGLE_DRIVE_MCP_URL=
-VITE_GOOGLE_DRIVE_MCP_TOKEN=
+# Google Drive (서비스 계정 + 폴더 ID 방식)
+VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL=chatbot@<project>.iam.gserviceaccount.com
+VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+VITE_GOOGLE_DRIVE_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv
 ```
 
 `.env` 는 `.gitignore` 에 포함되어 있어 GitHub에 올라가지 않습니다.
@@ -108,14 +109,39 @@ GitHub 리포지터리만 연결하면 자동 빌드됩니다.
 3. 통합 토큰(`secret_…`)을 `VITE_NOTION_MCP_TOKEN` 으로 등록
 4. URL 은 기본 `https://mcp.notion.com/mcp` (`VITE_NOTION_MCP_URL`)
 
-### Google Drive MCP
+### Google Drive (서비스 계정 + 폴더 ID 방식)
 
-평가계획서/탐구활동 자료는 **교사가 Drive에 직접 PDF로 업로드**한다는 전제이며,
-앱은 MCP를 통해 **읽기만** 수행합니다.
+Drive는 MCP 서버 없이 **서비스 계정 → JWT → OAuth access_token → Drive API v3** 흐름으로
+브라우저에서 직접 호출합니다. 학급 자료 폴더 하나에 그 서비스 계정 이메일을 뷰어로 공유해 두면,
+앱이 스타터 클릭 시 폴더 안 파일 목록과 PDF 내용을 가져옵니다(Claude 모델일 때 PDF 자동 첨부, 최대 5개·합계 10MB).
 
-- Drive MCP 엔드포인트는 학교/사내에서 별도 운영하는 MCP 서버 URL을 등록해야 합니다.
-  공식 Drive MCP 주소가 환경에 따라 다르므로, 운영자에게 확인 후 `VITE_GOOGLE_DRIVE_MCP_URL` 에 입력하세요.
-- 토큰은 Drive 접근 권한이 있는 서비스 계정/사용자 OAuth 토큰을 `VITE_GOOGLE_DRIVE_MCP_TOKEN` 에 등록합니다.
+**셋업 절차** (한 번만)
+
+1. **Google Cloud Console** → 새 프로젝트 생성 (이름 예: `class-chatbot-drive`)
+2. **API & Services → Library → Google Drive API → Enable**
+3. **IAM & Admin → Service Accounts → Create service account**
+   - 이름: `class-chatbot`
+   - 역할은 비워 두어도 됨 (Drive 폴더에서 직접 공유로 권한 부여)
+4. 생성된 서비스 계정 → **Keys → Add key → Create new key → JSON**
+   - 다운로드된 JSON 파일에서 `client_email` 과 `private_key` 두 값 추출
+5. **Google Drive** 에 학급 자료용 폴더 생성 (예: "3학년 2반 자료")
+   - 폴더 우클릭 → **공유** → 위 서비스 계정 이메일을 **뷰어** 로 추가
+   - 폴더 URL `https://drive.google.com/drive/folders/<여기가_FOLDER_ID>` 에서 ID 추출
+6. 환경 변수 등록:
+   ```
+   VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL=class-chatbot@<프로젝트>.iam.gserviceaccount.com
+   VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
+   VITE_GOOGLE_DRIVE_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv
+   ```
+   - `.env` 에 적을 때는 private key 내용을 한 줄로 합치고 줄바꿈을 `\n` 으로 이스케이프
+   - Netlify 환경 변수에 적을 때는 multiline 그대로 입력해도 됨
+
+**운영 메모**
+
+- 새 자료는 그냥 Drive 폴더에 끌어다 놓으면 끝. 앱 재배포 불필요(다음 호출 시 최신 목록 반영).
+- PDF 파일명·설명을 잘 적어두면 LLM이 그 자료를 더 정확하게 찾아 줍니다.
+- 폴더 안에 50MB 짜리 PDF 같은 큰 파일이 있으면 자동 첨부에서 제외되고 학생에게 안내됩니다.
+- 서비스 계정 키는 한 번 만들면 만료 없음. 누출 의심 시에만 Cloud Console에서 **Disable / Delete key** 후 재발급.
 
 ---
 
@@ -190,11 +216,14 @@ homerome_chatbot/
 │   ├── lib/
 │   │   ├── llm/
 │   │   │   ├── index.ts         # sendMessage 통합 인터페이스
-│   │   │   ├── claude.ts        # Anthropic + MCP
+│   │   │   ├── claude.ts        # Anthropic + 노션 MCP + PDF 첨부
 │   │   │   ├── openai.ts
 │   │   │   ├── gemini.ts
 │   │   │   └── types.ts
-│   │   ├── env.ts               # 환경 변수 → ApiKeys/McpConfig
+│   │   ├── drive/
+│   │   │   ├── auth.ts          # 서비스 계정 → JWT → access_token
+│   │   │   └── index.ts         # listFolderFiles / fetchDriveContext
+│   │   ├── env.ts               # 환경 변수 → ApiKeys / McpConfig / DriveConfig
 │   │   ├── storage.ts           # localStorage 래퍼 (학생/대화 기록만)
 │   │   └── roster.ts
 │   ├── data/

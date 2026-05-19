@@ -12,8 +12,9 @@ interface ImportMetaEnv {
   readonly VITE_NOTION_MCP_URL?: string
   readonly VITE_NOTION_MCP_TOKEN?: string
 
-  readonly VITE_GOOGLE_DRIVE_MCP_URL?: string
-  readonly VITE_GOOGLE_DRIVE_MCP_TOKEN?: string
+  readonly VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL?: string
+  readonly VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?: string
+  readonly VITE_GOOGLE_DRIVE_FOLDER_ID?: string
 }
 
 interface ImportMeta {

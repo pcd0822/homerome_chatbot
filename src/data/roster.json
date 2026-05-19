@@ -1,10 +1,29 @@
 {
-  "classInfo": { "grade": 3, "classNum": 2, "year": 2026 },
+  "classInfo": { "grade": 3, "classNum": 5, "year": 2026 },
   "students": [
-    { "studentId": "30201", "name": "김민지" },
-    { "studentId": "30202", "name": "이서준" },
-    { "studentId": "30203", "name": "박지우" },
-    { "studentId": "30204", "name": "최도윤" },
-    { "studentId": "30205", "name": "윤하린" }
+    { "studentId": "30501", "name": "강한솔" },
+    { "studentId": "30502", "name": "김나연" },
+    { "studentId": "30503", "name": "김리헌" },
+    { "studentId": "30504", "name": "김소연" },
+    { "studentId": "30505", "name": "김예림" },
+    { "studentId": "30506", "name": "김지효" },
+    { "studentId": "30507", "name": "김효선" },
+    { "studentId": "30508", "name": "박서연" },
+    { "studentId": "30509", "name": "박채연" },
+    { "studentId": "30510", "name": "석유림" },
+    { "studentId": "30511", "name": "신채희" },
+    { "studentId": "30512", "name": "오시율" },
+    { "studentId": "30513", "name": "윤서아" },
+    { "studentId": "30514", "name": "이민주" },
+    { "studentId": "30515", "name": "이민희" },
+    { "studentId": "30516", "name": "이서현" },
+    { "studentId": "30517", "name": "이은후" },
+    { "studentId": "30518", "name": "이지윤" },
+    { "studentId": "30519", "name": "이지현" },
+    { "studentId": "30520", "name": "정예원" },
+    { "studentId": "30521", "name": "정주원" },
+    { "studentId": "30522", "name": "정희원" },
+    { "studentId": "30523", "name": "진예담" },
+    { "studentId": "30524", "name": "최지은" }
   ]
 }
