@@ -2,7 +2,7 @@
 // 사용자(학생)는 어떤 비밀도 입력하지 않는다. 빌드 시점에 .env(로컬) 또는
 // Netlify Environment variables 에서 인라인된 값만 사용한다.
 
-import type { ApiKeys, DriveServiceAccountConfig } from '@/types'
+import type { ApiKeys, DriveServiceAccountConfig, NeisConfig } from '@/types'
 
 function read(value: string | undefined): string {
   if (typeof value !== 'string') return ''
@@ -77,4 +77,11 @@ export function getEnvDriveConfig(): DriveServiceAccountConfig | null {
 
   if (!clientEmail || !privateKey || !folderId) return null
   return { clientEmail, privateKey, folderId }
+}
+
+export function getEnvNeisConfig(): NeisConfig | null {
+  const schoolName = read(import.meta.env.VITE_NEIS_SCHOOL_NAME)
+  const apiKey = read(import.meta.env.VITE_NEIS_API_KEY)
+  if (!schoolName) return null
+  return apiKey ? { schoolName, apiKey } : { schoolName }
 }

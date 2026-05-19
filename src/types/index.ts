@@ -50,6 +50,13 @@ export interface DriveServiceAccountConfig {
   folderId: string
 }
 
+// NEIS Open API 설정. 학교명만 있어도 동작(코드는 첫 호출에 자동 검색).
+// API 키는 선택 — 없으면 호출 한도가 작지만 무인증 호출 가능.
+export interface NeisConfig {
+  schoolName: string
+  apiKey?: string
+}
+
 export interface Starter {
   id: string
   emoji: string

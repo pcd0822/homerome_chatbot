@@ -12,6 +12,9 @@ interface ImportMetaEnv {
   readonly VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL?: string
   readonly VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?: string
   readonly VITE_GOOGLE_DRIVE_FOLDER_ID?: string
+
+  readonly VITE_NEIS_SCHOOL_NAME?: string
+  readonly VITE_NEIS_API_KEY?: string
 }
 
 interface ImportMeta {

@@ -3,7 +3,11 @@ import StudentLoginModal from '@/components/StudentLoginModal'
 import Sidebar from '@/components/Sidebar'
 import ChatArea from '@/components/ChatArea'
 import { storage, newId } from '@/lib/storage'
-import { getEnvApiKeys, getEnvDriveConfig } from '@/lib/env'
+import {
+  getEnvApiKeys,
+  getEnvDriveConfig,
+  getEnvNeisConfig,
+} from '@/lib/env'
 import { getClassLabel } from '@/lib/roster'
 import {
   DEFAULT_SYSTEM_PROMPT,
@@ -13,6 +17,7 @@ import {
   type PdfAttachment,
 } from '@/lib/llm'
 import { fetchDriveContext, formatDriveFilesAsContext } from '@/lib/drive'
+import { fetchNeisContext, formatNeisContextAsText } from '@/lib/neis'
 import { PROVIDER_LABEL } from '@/types'
 import type {
   Conversation,
@@ -32,6 +37,7 @@ export default function App() {
   // 환경 변수에서 한 번만 읽는다. 학생 PC에는 키가 저장되지 않는다.
   const apiKeys = useMemo(() => getEnvApiKeys(), [])
   const driveConfig = useMemo(() => getEnvDriveConfig(), [])
+  const neisConfig = useMemo(() => getEnvNeisConfig(), [])
 
   const [student, setStudent] = useState<Student | null>(null)
   const [hydrated, setHydrated] = useState(false)
@@ -138,7 +144,36 @@ export default function App() {
     storage.setSelectedProvider(p)
   }
 
-  async function handleSend(content: string) {
+  // Drive PDF 본문 첨부 여부 휴리스틱.
+  // 매 메시지마다 PDF 를 첨부하면 토큰 한도(rate limit) 를 빠르게 소진하므로,
+  // 학생 메시지에 자료 관련 키워드가 있을 때 또는 스타터 강제 옵션일 때만 첨부.
+  function shouldAttachDrivePdf(content: string): boolean {
+    const triggers = [
+      '평가계획',
+      '평가 기준',
+      '평가기준',
+      '평가 방법',
+      '평가방법',
+      '평가 비중',
+      '평가비중',
+      '수행평가',
+      '수행 평가',
+      '수행',
+      '탐구활동',
+      '탐구 활동',
+      '탐구',
+      '계획서',
+      '보고서',
+      '활동 자료',
+      '활동자료',
+    ]
+    return triggers.some((t) => content.includes(t))
+  }
+
+  async function handleSend(
+    content: string,
+    options: { forceDrivePdf?: boolean } = {},
+  ) {
     if (!student || isPending) return
     if (!selectedProvider || !hasKey(apiKeys, selectedProvider)) {
       alert('사용 가능한 LLM 키가 없습니다. 교사/운영자에게 문의하세요.')
@@ -176,21 +211,39 @@ export default function App() {
 
     setIsPending(true)
     try {
-      // Drive 컨텍스트는 driveConfig 가 있으면 모든 메시지마다 자동 첨부.
-      // 5분 메모리 캐시로 반복 호출 비용을 줄이고, Claude PDF block 에는 prompt
-      // caching 을 적용해 같은 PDF 가 매 메시지마다 들어가도 토큰 비용은 ~90% 절감.
+      // 1) NEIS (학교 정보 + 학사일정 + 급식) — 매 메시지 자동 첨부, 토큰 작음
+      let neisAddon = ''
+      if (neisConfig) {
+        try {
+          const ctx = await fetchNeisContext(neisConfig)
+          neisAddon = '\n\n' + formatNeisContextAsText(ctx)
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err)
+          // eslint-disable-next-line no-console
+          console.error('[neis] fetchNeisContext 실패:', reason, err)
+          neisAddon = `\n\n(참고: NEIS 학교 데이터를 가져오지 못했습니다. 사유: ${reason})`
+        }
+      }
+
+      // 2) Drive 컨텍스트
+      //    - 파일 목록(텍스트)은 매번 첨부 (가벼움)
+      //    - PDF 본문 첨부는 스타터 강제 또는 학생 메시지에 자료 키워드가 있을 때만
+      //      (rate limit 30k tpm 보호)
       let driveSystemAddon = ''
       let pdfAttachments: PdfAttachment[] | undefined
       if (driveConfig) {
         try {
           const onClaude = selectedProvider === 'claude'
+          const wantsPdf =
+            (options.forceDrivePdf ?? false) || shouldAttachDrivePdf(content)
           const ctx = await fetchDriveContext(driveConfig, {
-            maxPdfCount: onClaude ? 5 : 0,
+            maxPdfCount: onClaude && wantsPdf ? 5 : 0,
             maxTotalBytes: 10 * 1024 * 1024,
           })
           // eslint-disable-next-line no-console
           console.info('[drive] context attached', {
             총_파일수: ctx.allFiles.length,
+            PDF_첨부_요청: wantsPdf,
             첨부된_PDF: ctx.attachments.map((a) => a.file.name),
             제외된_파일: ctx.skipped.map((s) => `${s.file.name}(${s.reason})`),
           })
@@ -201,25 +254,23 @@ export default function App() {
               title: a.file.name,
               base64: a.base64,
             }))
-            driveSystemAddon += `\n\n위 PDF ${ctx.attachments.length}개는 이번 메시지에 실제 첨부되었습니다. 학생 질문과 관련된 파일이면 내용을 직접 인용/요약해 답하세요.`
-          } else if (!onClaude) {
+            driveSystemAddon += `\n\n위 PDF ${ctx.attachments.length}개가 이번 메시지에 실제 첨부되었습니다. 내용을 직접 인용·요약해 답하세요.`
+          } else if (wantsPdf && !onClaude) {
             driveSystemAddon +=
               '\n\n(PDF 직접 첨부는 Claude 모델에서만 가능합니다. 지금은 파일 목록만 보고 학생을 안내해 주세요.)'
-          }
-          if (ctx.skipped.length > 0) {
-            const skipNames = ctx.skipped
-              .map((s) => `"${s.file.name}"(${s.reason})`)
-              .join(', ')
-            driveSystemAddon += `\n\n첨부에서 제외된 파일: ${skipNames}`
+          } else if (!wantsPdf) {
+            driveSystemAddon +=
+              '\n\n(이 질문은 PDF 본문을 첨부하지 않았습니다. 학생이 평가·수행평가·탐구 등 자료 관련 질문을 명시할 때 본문이 추가됩니다.)'
           }
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err)
           // eslint-disable-next-line no-console
           console.error('[drive] fetchDriveContext 실패:', reason, err)
-          // Drive 실패 시 학생에게는 노출하지 않고 시스템 프롬프트로만 알림.
-          driveSystemAddon = `\n\n(참고: 학급 Drive 자료를 가져오지 못했습니다. 자료 없이 답해주세요. 사유: ${reason})`
+          driveSystemAddon = `\n\n(참고: 학급 Drive 자료를 가져오지 못했습니다. 사유: ${reason})`
         }
       }
+
+      const driveAndNeis = neisAddon + driveSystemAddon
 
       // LLM 호출
       const apiKey = apiKeys[selectedProvider]!
@@ -228,7 +279,7 @@ export default function App() {
         provider: selectedProvider,
         apiKey,
         messages: conv.messages,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveSystemAddon,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveAndNeis,
         pdfAttachments,
       })
 
@@ -272,8 +323,9 @@ export default function App() {
   }
 
   function handlePickStarter(s: Starter) {
-    // Drive 컨텍스트는 이제 모든 메시지에서 자동 첨부되므로 옵션 분기 불필요.
-    void handleSend(s.prompt)
+    // Drive 관련 스타터(평가계획서/탐구활동)는 PDF 본문 강제 첨부.
+    // 일반 스타터는 NEIS/파일목록만으로 답변 가능.
+    void handleSend(s.prompt, { forceDrivePdf: s.requiresDrive ?? false })
   }
 
   if (!hydrated) {
