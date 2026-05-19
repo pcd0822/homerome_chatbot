@@ -16,11 +16,53 @@ interface CachedToken {
 let cached: CachedToken | null = null
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
+  if (!pem.includes('-----BEGIN PRIVATE KEY-----')) {
+    throw new Error(
+      'Private key 가 PKCS8 PEM 형식이 아닙니다. ' +
+        '"-----BEGIN PRIVATE KEY-----" 헤더로 시작해야 합니다. ' +
+        'Google Cloud Console 에서 받은 JSON 키 파일의 private_key 값을 그대로 사용하세요.',
+    )
+  }
+  if (!pem.includes('-----END PRIVATE KEY-----')) {
+    throw new Error(
+      'Private key 의 "-----END PRIVATE KEY-----" 푸터가 누락되었습니다. ' +
+        '.env 에서 값이 중간에 잘렸을 수 있습니다(따옴표로 감쌌는지 확인하세요).',
+    )
+  }
+
   const b64 = pem
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/\s+/g, '')
-  const binary = atob(b64)
+
+  if (b64.length === 0) {
+    throw new Error(
+      'Private key 본문이 비어 있습니다. .env 의 값이 손상되었습니다.',
+    )
+  }
+
+  // base64 표준 알파벳(A-Z, a-z, 0-9, +, /, =) 만 허용. 그 외 문자가 있으면
+  // \n 이스케이프 미처리 또는 따옴표 혼입 등이 원인이라 명확히 알린다.
+  const invalidMatch = b64.match(/[^A-Za-z0-9+/=]/)
+  if (invalidMatch) {
+    const offset = b64.indexOf(invalidMatch[0])
+    const context = b64.slice(Math.max(0, offset - 10), offset + 10)
+    throw new Error(
+      `Private key 본문에 base64 가 아닌 문자가 포함되었습니다. ` +
+        `(문제 문자: "${invalidMatch[0]}", 주변: "${context}"). ` +
+        '대부분의 경우 .env 의 줄바꿈(\\n) 이스케이프가 풀리지 않은 상태입니다. ' +
+        'private_key 값을 큰따옴표로 감싸고 줄바꿈을 \\n 으로 적어 주세요.',
+    )
+  }
+
+  let binary: string
+  try {
+    binary = atob(b64)
+  } catch {
+    throw new Error(
+      'Private key base64 디코딩 실패. .env 의 private_key 가 손상된 듯합니다.',
+    )
+  }
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
   return bytes.buffer
