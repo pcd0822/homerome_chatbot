@@ -92,10 +92,40 @@ export interface DriveContext {
   skipped: Array<{ file: DriveFile; reason: string }>
 }
 
+// 모듈 메모리 내 캐시. 학생이 한 세션에서 여러 메시지 보낼 때마다 PDF를 다시
+// 다운로드/base64 인코딩하는 비용을 피한다. 5분 TTL.
+interface CachedDriveContext {
+  context: DriveContext
+  cachedAt: number
+  folderId: string
+  optionsKey: string
+}
+
+let driveCache: CachedDriveContext | null = null
+const CACHE_TTL_MS = 5 * 60 * 1000
+
+function makeOptionsKey(o: FetchDriveContextOptions): string {
+  return `${o.maxPdfCount ?? 5}|${o.maxTotalBytes ?? 10 * 1024 * 1024}`
+}
+
+export function clearDriveCache(): void {
+  driveCache = null
+}
+
 export async function fetchDriveContext(
   cfg: DriveServiceAccountConfig,
   options: FetchDriveContextOptions = {},
 ): Promise<DriveContext> {
+  const optionsKey = makeOptionsKey(options)
+  if (
+    driveCache &&
+    driveCache.folderId === cfg.folderId &&
+    driveCache.optionsKey === optionsKey &&
+    Date.now() - driveCache.cachedAt < CACHE_TTL_MS
+  ) {
+    return driveCache.context
+  }
+
   const maxPdfCount = options.maxPdfCount ?? 5
   const maxTotalBytes = options.maxTotalBytes ?? 10 * 1024 * 1024 // 10MB
 
@@ -135,7 +165,14 @@ export async function fetchDriveContext(
     }
   }
 
-  return { allFiles, attachments, skipped }
+  const context: DriveContext = { allFiles, attachments, skipped }
+  driveCache = {
+    context,
+    cachedAt: Date.now(),
+    folderId: cfg.folderId,
+    optionsKey,
+  }
+  return context
 }
 
 // LLM systemPrompt 에 prepend 할 텍스트.

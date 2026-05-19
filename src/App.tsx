@@ -28,10 +28,6 @@ function truncateTitle(text: string): string {
   return trimmed.slice(0, 20) + '…'
 }
 
-interface SendOptions {
-  useDriveContext?: boolean
-}
-
 export default function App() {
   // 환경 변수에서 한 번만 읽는다. 학생 PC에는 키가 저장되지 않는다.
   const apiKeys = useMemo(() => getEnvApiKeys(), [])
@@ -142,7 +138,7 @@ export default function App() {
     storage.setSelectedProvider(p)
   }
 
-  async function handleSend(content: string, options: SendOptions = {}) {
+  async function handleSend(content: string) {
     if (!student || isPending) return
     if (!selectedProvider || !hasKey(apiKeys, selectedProvider)) {
       alert('사용 가능한 LLM 키가 없습니다. 교사/운영자에게 문의하세요.')
@@ -180,64 +176,48 @@ export default function App() {
 
     setIsPending(true)
     try {
-      // Drive 컨텍스트 수집 (요청이 있고 설정이 있을 때만)
+      // Drive 컨텍스트는 driveConfig 가 있으면 모든 메시지마다 자동 첨부.
+      // 5분 메모리 캐시로 반복 호출 비용을 줄이고, Claude PDF block 에는 prompt
+      // caching 을 적용해 같은 PDF 가 매 메시지마다 들어가도 토큰 비용은 ~90% 절감.
       let driveSystemAddon = ''
       let pdfAttachments: PdfAttachment[] | undefined
-      if (options.useDriveContext) {
-        if (!driveConfig) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            '[drive] useDriveContext=true 인데 driveConfig 가 null 입니다. ' +
-              '.env 의 VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL / VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY / VITE_GOOGLE_DRIVE_FOLDER_ID 값을 확인하고 dev 서버를 재시작하세요.',
-          )
-          driveSystemAddon =
-            '\n\n[안내] Google Drive 학급 폴더가 아직 설정되지 않았습니다. ' +
-            '교사/운영자가 환경 변수를 등록해야 자료를 조회할 수 있어요.'
-        } else {
-          // eslint-disable-next-line no-console
-          console.info('[drive] fetchDriveContext 시작', {
-            folderId: driveConfig.folderId,
-            clientEmail: driveConfig.clientEmail,
+      if (driveConfig) {
+        try {
+          const onClaude = selectedProvider === 'claude'
+          const ctx = await fetchDriveContext(driveConfig, {
+            maxPdfCount: onClaude ? 5 : 0,
+            maxTotalBytes: 10 * 1024 * 1024,
           })
-          try {
-            const onClaude = selectedProvider === 'claude'
-            const ctx = await fetchDriveContext(driveConfig, {
-              maxPdfCount: onClaude ? 5 : 0,
-              maxTotalBytes: 10 * 1024 * 1024,
-            })
-            // eslint-disable-next-line no-console
-            console.info('[drive] fetchDriveContext 성공', {
-              총_파일수: ctx.allFiles.length,
-              파일명: ctx.allFiles.map((f) => f.name),
-              첨부된_PDF: ctx.attachments.map((a) => a.file.name),
-              제외된_파일: ctx.skipped.map(
-                (s) => `${s.file.name}(${s.reason})`,
-              ),
-            })
-            const listText = formatDriveFilesAsContext(ctx.allFiles)
-            driveSystemAddon = `\n\n## Google Drive 학급 폴더 파일 목록\n${listText}`
-            if (onClaude && ctx.attachments.length > 0) {
-              pdfAttachments = ctx.attachments.map((a) => ({
-                title: a.file.name,
-                base64: a.base64,
-              }))
-              driveSystemAddon += `\n\n위 PDF ${ctx.attachments.length}개는 이번 메시지에 실제 첨부되었으니 내용을 직접 인용/요약해 답해도 됩니다.`
-            } else if (!onClaude) {
-              driveSystemAddon +=
-                '\n\n(PDF 내용 직접 첨부는 Claude 모델에서만 가능합니다. 지금은 파일 목록만 활용해 안내해 주세요.)'
-            }
-            if (ctx.skipped.length > 0) {
-              const skipNames = ctx.skipped
-                .map((s) => `"${s.file.name}"(${s.reason})`)
-                .join(', ')
-              driveSystemAddon += `\n\n첨부에서 제외된 파일: ${skipNames}`
-            }
-          } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err)
-            // eslint-disable-next-line no-console
-            console.error('[drive] fetchDriveContext 실패:', reason, err)
-            driveSystemAddon = `\n\n[Drive 조회 실패] ${reason}`
+          // eslint-disable-next-line no-console
+          console.info('[drive] context attached', {
+            총_파일수: ctx.allFiles.length,
+            첨부된_PDF: ctx.attachments.map((a) => a.file.name),
+            제외된_파일: ctx.skipped.map((s) => `${s.file.name}(${s.reason})`),
+          })
+          const listText = formatDriveFilesAsContext(ctx.allFiles)
+          driveSystemAddon = `\n\n## 학급 Google Drive 폴더 자료 목록\n${listText}`
+          if (onClaude && ctx.attachments.length > 0) {
+            pdfAttachments = ctx.attachments.map((a) => ({
+              title: a.file.name,
+              base64: a.base64,
+            }))
+            driveSystemAddon += `\n\n위 PDF ${ctx.attachments.length}개는 이번 메시지에 실제 첨부되었습니다. 학생 질문과 관련된 파일이면 내용을 직접 인용/요약해 답하세요.`
+          } else if (!onClaude) {
+            driveSystemAddon +=
+              '\n\n(PDF 직접 첨부는 Claude 모델에서만 가능합니다. 지금은 파일 목록만 보고 학생을 안내해 주세요.)'
           }
+          if (ctx.skipped.length > 0) {
+            const skipNames = ctx.skipped
+              .map((s) => `"${s.file.name}"(${s.reason})`)
+              .join(', ')
+            driveSystemAddon += `\n\n첨부에서 제외된 파일: ${skipNames}`
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err)
+          // eslint-disable-next-line no-console
+          console.error('[drive] fetchDriveContext 실패:', reason, err)
+          // Drive 실패 시 학생에게는 노출하지 않고 시스템 프롬프트로만 알림.
+          driveSystemAddon = `\n\n(참고: 학급 Drive 자료를 가져오지 못했습니다. 자료 없이 답해주세요. 사유: ${reason})`
         }
       }
 
@@ -292,7 +272,8 @@ export default function App() {
   }
 
   function handlePickStarter(s: Starter) {
-    void handleSend(s.prompt, { useDriveContext: s.requiresDrive ?? false })
+    // Drive 컨텍스트는 이제 모든 메시지에서 자동 첨부되므로 옵션 분기 불필요.
+    void handleSend(s.prompt)
   }
 
   if (!hydrated) {

@@ -27,6 +27,9 @@ interface AnthropicDocumentBlock {
     data: string
   }
   title?: string
+  // Prompt caching: 같은 PDF를 매 메시지마다 보내도 5분 동안은 캐시 히트가 되어
+  // 입력 토큰 비용이 약 90% 절감된다.
+  cache_control?: { type: 'ephemeral' }
 }
 type AnthropicContentBlock = AnthropicTextBlock | AnthropicDocumentBlock
 
@@ -57,7 +60,7 @@ export async function callClaude(
       if (m.role !== 'user') continue
       const text = typeof m.content === 'string' ? m.content : ''
       const blocks: AnthropicContentBlock[] = []
-      for (const pdf of pdfs) {
+      pdfs.forEach((pdf, idx) => {
         blocks.push({
           type: 'document',
           source: {
@@ -66,11 +69,15 @@ export async function callClaude(
             data: pdf.base64,
           },
           title: pdf.title,
+          // 마지막 PDF에만 cache breakpoint. 그 앞의 PDF 들도 함께 캐싱된다.
+          ...(idx === pdfs.length - 1
+            ? { cache_control: { type: 'ephemeral' as const } }
+            : {}),
         })
-      }
+      })
       blocks.push({
         type: 'text',
-        text: text || '(첨부 파일을 참고해 답해주세요)',
+        text: text || '(첨부 자료를 참고해 답해주세요)',
       })
       baseMessages[i] = { role: 'user', content: blocks }
       break
