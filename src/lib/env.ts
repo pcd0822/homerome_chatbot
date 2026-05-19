@@ -33,6 +33,11 @@ export function getEnvMcpConfig(): McpConfig {
   return cfg
 }
 
+// 학급 노션 메인 페이지 URL (선택). 시스템 프롬프트에서 Claude 에게 우선 참고할 페이지로 안내.
+export function getEnvNotionPageUrl(): string {
+  return read(import.meta.env.VITE_NOTION_PAGE_URL)
+}
+
 export function getEnvDriveConfig(): DriveServiceAccountConfig | null {
   const clientEmail = read(import.meta.env.VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL)
   // .env 에서는 줄바꿈을 \n 이스케이프로 한 줄에 적는 경우가 흔하므로

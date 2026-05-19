@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import MessageBubble from './MessageBubble'
 import ConversationStarters from './ConversationStarters'
 import { getVocativeName } from '@/lib/roster'
-import type { Message, Starter, Student } from '@/types'
+import { hasKey } from '@/lib/llm'
+import type { ApiKeys, LlmProvider, Message, Starter, Student } from '@/types'
 
 interface Props {
   student: Student
@@ -10,6 +11,16 @@ interface Props {
   isPending: boolean
   onSend: (content: string) => void
   onPickStarter: (s: Starter) => void
+  apiKeys: ApiKeys
+  selectedProvider: LlmProvider | null
+  onSelectProvider: (p: LlmProvider) => void
+}
+
+const PROVIDERS: LlmProvider[] = ['claude', 'openai', 'gemini']
+const SHORT_LABEL: Record<LlmProvider, string> = {
+  claude: 'Claude',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
 }
 
 export default function ChatArea({
@@ -18,6 +29,9 @@ export default function ChatArea({
   isPending,
   onSend,
   onPickStarter,
+  apiKeys,
+  selectedProvider,
+  onSelectProvider,
 }: Props) {
   const [input, setInput] = useState('')
   const listEndRef = useRef<HTMLDivElement | null>(null)
@@ -42,6 +56,7 @@ export default function ChatArea({
   }
 
   const showEmpty = messages.length === 0
+  const noKeysAtAll = PROVIDERS.every((p) => !hasKey(apiKeys, p))
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -83,6 +98,42 @@ export default function ChatArea({
       </div>
 
       <div className="border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
+        {/* 모델 선택 칩 row — 명세상 입력창 옆 영역에 배치 */}
+        <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[11px] font-medium text-slate-400">
+            모델
+          </span>
+          {PROVIDERS.map((p) => {
+            const enabled = hasKey(apiKeys, p)
+            const active = selectedProvider === p
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => onSelectProvider(p)}
+                disabled={!enabled}
+                title={enabled ? SHORT_LABEL[p] : `${SHORT_LABEL[p]} 키 미설정`}
+                className={[
+                  'rounded-full px-3 py-1 text-xs font-medium transition',
+                  active
+                    ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/20'
+                    : enabled
+                      ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      : 'cursor-not-allowed bg-slate-50 text-slate-300',
+                ].join(' ')}
+              >
+                {SHORT_LABEL[p]}
+                {!enabled && <span className="ml-1 text-[10px]">·키 없음</span>}
+              </button>
+            )
+          })}
+          {noKeysAtAll && (
+            <span className="ml-1 text-[10px] text-amber-600">
+              · 환경 변수에 API 키가 없습니다
+            </span>
+          )}
+        </div>
+
         <form
           onSubmit={(e) => {
             e.preventDefault()

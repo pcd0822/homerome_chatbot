@@ -1,23 +1,16 @@
 import { getClassLabel } from '@/lib/roster'
-import { hasKey } from '@/lib/llm'
-import { PROVIDER_LABEL } from '@/types'
-import type { ApiKeys, Conversation, LlmProvider } from '@/types'
+import type { Conversation } from '@/types'
 
 interface Props {
   collapsed: boolean
   onToggleCollapsed: () => void
   onNewConversation: () => void
   onResetMyData: () => void
-  apiKeys: ApiKeys
-  selectedProvider: LlmProvider | null
-  onSelectProvider: (p: LlmProvider) => void
   conversations: Conversation[]
   activeId: string | null
   onSelectConversation: (id: string) => void
   onDeleteConversation: (id: string) => void
 }
-
-const PROVIDERS: LlmProvider[] = ['claude', 'openai', 'gemini']
 
 export default function Sidebar(props: Props) {
   const {
@@ -25,16 +18,11 @@ export default function Sidebar(props: Props) {
     onToggleCollapsed,
     onNewConversation,
     onResetMyData,
-    apiKeys,
-    selectedProvider,
-    onSelectProvider,
     conversations,
     activeId,
     onSelectConversation,
     onDeleteConversation,
   } = props
-
-  const noKeysAtAll = PROVIDERS.every((p) => !hasKey(apiKeys, p))
 
   if (collapsed) {
     return (
@@ -100,37 +88,6 @@ export default function Sidebar(props: Props) {
         </button>
       </div>
 
-      <div className="px-3 pt-4">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-          모델
-        </p>
-        <select
-          value={selectedProvider ?? ''}
-          onChange={(e) => onSelectProvider(e.target.value as LlmProvider)}
-          disabled={noKeysAtAll}
-          className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <option value="" disabled>
-            모델 선택…
-          </option>
-          {PROVIDERS.map((p) => {
-            const enabled = hasKey(apiKeys, p)
-            return (
-              <option key={p} value={p} disabled={!enabled}>
-                {PROVIDER_LABEL[p]}
-                {enabled ? '' : ' — 키 미설정'}
-              </option>
-            )
-          })}
-        </select>
-        {noKeysAtAll && (
-          <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-700">
-            ⚠️ Netlify 환경변수(또는 <code>.env</code>)에 API 키가 등록되지 않았습니다.
-            교사에게 문의하세요.
-          </p>
-        )}
-      </div>
-
       <div className="mt-4 px-3 text-[11px] font-medium uppercase tracking-wide text-slate-400">
         대화 기록
       </div>
@@ -191,8 +148,7 @@ export default function Sidebar(props: Props) {
           내 데이터 초기화
         </button>
         <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-          이 학생의 대화 기록과 로그인 정보를 삭제합니다. (키는 서버 측에 있어
-          별도 작업 불필요)
+          이 학생의 대화 기록과 로그인 정보를 삭제합니다.
         </p>
       </div>
     </aside>

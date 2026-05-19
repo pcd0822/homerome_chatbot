@@ -3,10 +3,16 @@ import StudentLoginModal from '@/components/StudentLoginModal'
 import Sidebar from '@/components/Sidebar'
 import ChatArea from '@/components/ChatArea'
 import { storage, newId } from '@/lib/storage'
-import { getEnvApiKeys, getEnvDriveConfig, getEnvMcpConfig } from '@/lib/env'
+import {
+  getEnvApiKeys,
+  getEnvDriveConfig,
+  getEnvMcpConfig,
+  getEnvNotionPageUrl,
+} from '@/lib/env'
 import { getClassLabel } from '@/lib/roster'
 import {
   DEFAULT_SYSTEM_PROMPT,
+  buildNotionAutoSearchHint,
   hasKey,
   pickInitialProvider,
   sendMessage,
@@ -38,6 +44,7 @@ export default function App() {
   const apiKeys = useMemo(() => getEnvApiKeys(), [])
   const mcpConfig = useMemo(() => getEnvMcpConfig(), [])
   const driveConfig = useMemo(() => getEnvDriveConfig(), [])
+  const notionPageUrl = useMemo(() => getEnvNotionPageUrl(), [])
 
   const [student, setStudent] = useState<Student | null>(null)
   const [hydrated, setHydrated] = useState(false)
@@ -180,6 +187,12 @@ export default function App() {
     )
     persistConversations(student.studentId, working)
 
+    // Claude 모델 + 노션 설정 있으면 모든 메시지에서 노션 도구 자동 활성화
+    // (스타터에서 명시한 옵션이 우선)
+    const autoNotion =
+      selectedProvider === 'claude' && Boolean(mcpConfig.notion)
+    const mcpEnabled = options.mcpEnabled ?? autoNotion
+
     setIsPending(true)
     try {
       // 1) Drive 컨텍스트 수집 (요청이 있고 설정이 있을 때만)
@@ -227,13 +240,16 @@ export default function App() {
       // 2) LLM 호출
       const apiKey = apiKeys[selectedProvider]!
       const conv = working.find((c) => c.id === convId)!
+      const notionHint = mcpEnabled
+        ? buildNotionAutoSearchHint(notionPageUrl)
+        : ''
       const res = await sendMessage({
         provider: selectedProvider,
         apiKey,
         messages: conv.messages,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveSystemAddon,
-        mcpEnabled: options.mcpEnabled,
-        mcpConfig: options.mcpEnabled ? mcpConfig : undefined,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT + driveSystemAddon + notionHint,
+        mcpEnabled,
+        mcpConfig: mcpEnabled ? mcpConfig : undefined,
         pdfAttachments,
       })
 
@@ -305,9 +321,6 @@ export default function App() {
         onToggleCollapsed={handleToggleSidebar}
         onNewConversation={handleNewConversation}
         onResetMyData={handleResetMyData}
-        apiKeys={apiKeys}
-        selectedProvider={selectedProvider}
-        onSelectProvider={handleSelectProvider}
         conversations={conversations}
         activeId={activeId}
         onSelectConversation={handleSelectConversation}
@@ -351,6 +364,9 @@ export default function App() {
           isPending={isPending}
           onSend={(c) => void handleSend(c)}
           onPickStarter={handlePickStarter}
+          apiKeys={apiKeys}
+          selectedProvider={selectedProvider}
+          onSelectProvider={handleSelectProvider}
         />
       </div>
     </div>
