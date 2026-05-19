@@ -200,16 +200,36 @@ export default function App() {
       let pdfAttachments: PdfAttachment[] | undefined
       if (options.useDriveContext) {
         if (!driveConfig) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            '[drive] useDriveContext=true 인데 driveConfig 가 null 입니다. ' +
+              '.env 의 VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL / VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY / VITE_GOOGLE_DRIVE_FOLDER_ID 값을 확인하고 dev 서버를 재시작하세요.',
+          )
           driveSystemAddon =
             '\n\n[안내] Google Drive 학급 폴더가 아직 설정되지 않았습니다. ' +
             '교사/운영자가 환경 변수를 등록해야 자료를 조회할 수 있어요.'
         } else {
+          // eslint-disable-next-line no-console
+          console.info('[drive] fetchDriveContext 시작', {
+            folderId: driveConfig.folderId,
+            clientEmail: driveConfig.clientEmail,
+            privateKeyHead: driveConfig.privateKey.slice(0, 30),
+          })
           try {
             const onClaude = selectedProvider === 'claude'
             const ctx = await fetchDriveContext(driveConfig, {
               // Claude일 때만 PDF 첨부, 다른 모델은 목록만
               maxPdfCount: onClaude ? 5 : 0,
               maxTotalBytes: 10 * 1024 * 1024,
+            })
+            // eslint-disable-next-line no-console
+            console.info('[drive] fetchDriveContext 성공', {
+              총_파일수: ctx.allFiles.length,
+              파일명: ctx.allFiles.map((f) => f.name),
+              첨부된_PDF: ctx.attachments.map((a) => a.file.name),
+              제외된_파일: ctx.skipped.map(
+                (s) => `${s.file.name}(${s.reason})`,
+              ),
             })
             const listText = formatDriveFilesAsContext(ctx.allFiles)
             driveSystemAddon = `\n\n## Google Drive 학급 폴더 파일 목록\n${listText}`
@@ -232,6 +252,8 @@ export default function App() {
             }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err)
+            // eslint-disable-next-line no-console
+            console.error('[drive] fetchDriveContext 실패:', reason, err)
             driveSystemAddon = `\n\n[Drive 조회 실패] ${reason}`
           }
         }
