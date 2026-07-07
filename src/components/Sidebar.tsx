@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { getClassLabel } from '@/lib/roster'
 import type { Conversation } from '@/types'
 
@@ -9,7 +10,10 @@ interface Props {
   conversations: Conversation[]
   activeId: string | null
   onSelectConversation: (id: string) => void
+  onRenameConversation: (id: string, title: string) => void
   onDeleteConversation: (id: string) => void
+  onExport: () => void
+  onImport: (file: File) => void
 }
 
 export default function Sidebar(props: Props) {
@@ -21,8 +25,13 @@ export default function Sidebar(props: Props) {
     conversations,
     activeId,
     onSelectConversation,
+    onRenameConversation,
     onDeleteConversation,
+    onExport,
+    onImport,
   } = props
+
+  const fileRef = useRef<HTMLInputElement | null>(null)
 
   if (collapsed) {
     return (
@@ -63,10 +72,8 @@ export default function Sidebar(props: Props) {
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
         <div>
-          <p className="text-[10px] font-medium text-indigo-600">
-            {getClassLabel()}
-          </p>
-          <p className="text-sm font-semibold text-slate-800">학급 챗봇</p>
+          <p className="text-[10px] font-medium text-indigo-600">{getClassLabel()}</p>
+          <p className="text-sm font-semibold text-slate-800">탐구 챗봇</p>
         </div>
         <button
           type="button"
@@ -88,9 +95,41 @@ export default function Sidebar(props: Props) {
         </button>
       </div>
 
-      <div className="mt-4 px-3 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-        대화 기록
+      <div className="mt-4 flex items-center justify-between px-3">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+          최근 항목
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onExport}
+            title="대화 내보내기(JSON)"
+            className="rounded p-1 text-[11px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
+            내보내기
+          </button>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            title="대화 가져오기(JSON)"
+            className="rounded p-1 text-[11px] text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
+            가져오기
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) onImport(f)
+              e.target.value = ''
+            }}
+          />
+        </div>
       </div>
+
       <div className="flex-1 overflow-y-auto px-2 py-1">
         {sorted.length === 0 ? (
           <p className="px-2 py-2 text-xs text-slate-400">
@@ -105,9 +144,7 @@ export default function Sidebar(props: Props) {
                   <div
                     className={[
                       'group flex items-center rounded-lg px-2 py-1.5 text-xs transition',
-                      active
-                        ? 'bg-indigo-50 text-indigo-700'
-                        : 'text-slate-600 hover:bg-slate-100',
+                      active ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-100',
                     ].join(' ')}
                   >
                     <button
@@ -122,9 +159,19 @@ export default function Sidebar(props: Props) {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (confirm(`"${c.title}" 대화를 삭제할까요?`)) {
-                          onDeleteConversation(c.id)
-                        }
+                        const next = window.prompt('대화 이름 변경', c.title)
+                        if (next != null && next.trim()) onRenameConversation(c.id, next.trim())
+                      }}
+                      className="ml-1 opacity-0 transition group-hover:opacity-100"
+                      title="이름 변경"
+                    >
+                      <span className="text-slate-400 hover:text-slate-600">✎</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (confirm(`"${c.title}" 대화를 삭제할까요?`)) onDeleteConversation(c.id)
                       }}
                       className="ml-1 opacity-0 transition group-hover:opacity-100"
                       title="삭제"
@@ -148,7 +195,7 @@ export default function Sidebar(props: Props) {
           내 데이터 초기화
         </button>
         <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-          이 학생의 대화 기록과 로그인 정보를 삭제합니다.
+          대화는 이 기기에만 저장됩니다. 서버에는 저장되지 않아요.
         </p>
       </div>
     </aside>

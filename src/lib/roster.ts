@@ -1,5 +1,5 @@
 import rosterRaw from '@/data/roster.json'
-import type { ClassInfo, RosterFile, Student } from '@/types'
+import type { ClassInfo, RosterFile, RosterStudent, Student } from '@/types'
 
 const roster = rosterRaw as RosterFile
 
@@ -12,16 +12,26 @@ export function getClassLabel(): string {
   return `${year}년 ${grade}학년 ${classNum}반`
 }
 
-export function getAllStudents(): Student[] {
+export function getAllStudents(): RosterStudent[] {
   return roster.students
 }
 
-// 학번 정규화: 양쪽 공백만 제거. 명세는 숫자 문자열이지만,
-// 입력 단계에서 단순 trim만 한 뒤 정확 일치를 검사한다.
-export function findStudentById(studentId: string): Student | null {
+// 학번 + 개별 코드 2-factor 인증.
+// 다른 학생의 학번만으로는 접속할 수 없도록, 학번과 매칭되는 코드가 정확히
+// 일치해야 통과한다. 코드는 대소문자 무시(입력 편의), 학번/코드 모두 trim.
+// 반환값에는 code 를 제외한 Student 만 담아 이후 저장에 코드가 남지 않게 한다.
+export function findStudentByCredentials(
+  studentId: string,
+  code: string,
+): Student | null {
   const id = studentId.trim()
-  if (!id) return null
-  return roster.students.find((s) => s.studentId === id) ?? null
+  const c = code.trim().toUpperCase()
+  if (!id || !c) return null
+  const match = roster.students.find(
+    (s) => s.studentId === id && s.code.toUpperCase() === c,
+  )
+  if (!match) return null
+  return { studentId: match.studentId, name: match.name }
 }
 
 // 한국 이름에서 성을 떼고 이름만 반환한다.
@@ -41,7 +51,6 @@ function hasJongseong(char: string): boolean {
 }
 
 // "리헌" → "리헌아", "지효" → "지효야" 처럼 다정한 호격을 만든다.
-// 환영 메시지처럼 학생을 부를 때 사용.
 export function getVocativeName(fullName: string): string {
   const given = getGivenName(fullName)
   if (!given) return fullName

@@ -1,12 +1,24 @@
 # Netlify 배포 설정.
-# 환경 변수(VITE_*) 는 Site settings → Environment variables 에 등록하세요.
-# 이 파일은 빌드 명령과 SPA 리다이렉트만 정의합니다.
+# API 키(ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY)는
+# Site settings → Environment variables 에 등록하세요. (VITE_ 접두사 없이!)
 
 [build]
   command = "npm run build"
   publish = "dist"
+  functions = "netlify/functions"
 
-# Vite 산출물은 SPA. 모든 경로를 index.html 로 폴백.
+# 브라우저는 /api/* 만 호출한다. 실제 프로바이더 키는 이 함수 안에서만 쓰인다.
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+
+[[redirects]]
+  from = "/api/providers"
+  to = "/.netlify/functions/providers"
+  status = 200
+
+# 그 외 모든 경로는 SPA 로 폴백 (반드시 위 /api 규칙 뒤에 와야 함).
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -8,14 +8,21 @@ export interface ClassInfo {
   year: number
 }
 
+// 로그인에 쓰이는 학생 정보. name 은 환영 인사에만 사용하고,
+// 인증은 studentId + code 2-factor 로만 한다(이름은 인증에 관여하지 않음).
 export interface Student {
   studentId: string
   name: string
 }
 
+// 명부 원본 항목. code 는 학번과 매칭되는 개별 접속 코드(하드코딩).
+export interface RosterStudent extends Student {
+  code: string
+}
+
 export interface RosterFile {
   classInfo: ClassInfo
-  students: Student[]
+  students: RosterStudent[]
 }
 
 export type MessageRole = 'user' | 'assistant'
@@ -36,25 +43,11 @@ export interface Conversation {
   updatedAt: number
 }
 
-export interface ApiKeys {
-  claude?: string
-  openai?: string
-  gemini?: string
-}
-
-// Google Drive 는 서비스 계정으로 직접 호출한다.
-// 학급 자료를 둘 폴더(folderId)에 서비스 계정 email 을 뷰어로 공유.
-export interface DriveServiceAccountConfig {
-  clientEmail: string
-  privateKey: string // PEM
-  folderId: string
-}
-
-// NEIS Open API 설정. 학교명만 있어도 동작(코드는 첫 호출에 자동 검색).
-// API 키는 선택 — 없으면 호출 한도가 작지만 무인증 호출 가능.
-export interface NeisConfig {
-  schoolName: string
-  apiKey?: string
+// 서버(/api/providers)가 알려주는 사용 가능한 프로바이더 목록과 실제 모델 ID.
+// 키 자체는 절대 클라이언트로 내려오지 않는다(가용 여부와 모델명만).
+export interface ProviderInfo {
+  available: Record<LlmProvider, boolean>
+  models: Record<LlmProvider, string>
 }
 
 export interface Starter {
@@ -62,24 +55,16 @@ export interface Starter {
   emoji: string
   label: string
   prompt: string
-  /** Google Drive 학급 폴더 자료 조회/첨부가 필요한지 */
-  requiresDrive?: boolean
 }
 
 export interface StartersFile {
   starters: Starter[]
 }
 
-// 제공자별 표시명과 실제 모델 ID 매핑(명세 2.2 고정 모델).
-// UI 라벨/실제 호출에 사용.
+// 제공자별 짧은 표시명. 실제 모델 ID 는 서버 MODELS 에서 관리되며
+// /api/providers 로 받아 UI 에 함께 표시한다.
 export const PROVIDER_LABEL: Record<LlmProvider, string> = {
-  claude: 'Claude (claude-sonnet-4-5)',
-  openai: 'OpenAI (gpt-4.1)',
-  gemini: 'Gemini (gemini-2.5-pro)',
-}
-
-export const PROVIDER_MODEL_ID: Record<LlmProvider, string> = {
-  claude: 'claude-sonnet-4-5',
-  openai: 'gpt-4.1',
-  gemini: 'gemini-2.5-pro',
+  claude: 'Claude',
+  openai: 'GPT',
+  gemini: 'Gemini',
 }

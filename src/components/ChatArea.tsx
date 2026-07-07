@@ -2,34 +2,32 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import MessageBubble from './MessageBubble'
 import ConversationStarters from './ConversationStarters'
 import { getVocativeName } from '@/lib/roster'
-import { hasKey } from '@/lib/llm'
-import type { ApiKeys, LlmProvider, Message, Starter, Student } from '@/types'
+import { hasProvider } from '@/lib/api'
+import { PROVIDER_LABEL } from '@/types'
+import type { LlmProvider, Message, ProviderInfo, Starter, Student } from '@/types'
 
 interface Props {
   student: Student
   messages: Message[]
   isPending: boolean
   onSend: (content: string) => void
+  onStop: () => void
   onPickStarter: (s: Starter) => void
-  apiKeys: ApiKeys
+  providerInfo: ProviderInfo | null
   selectedProvider: LlmProvider | null
   onSelectProvider: (p: LlmProvider) => void
 }
 
 const PROVIDERS: LlmProvider[] = ['claude', 'openai', 'gemini']
-const SHORT_LABEL: Record<LlmProvider, string> = {
-  claude: 'Claude',
-  openai: 'OpenAI',
-  gemini: 'Gemini',
-}
 
 export default function ChatArea({
   student,
   messages,
   isPending,
   onSend,
+  onStop,
   onPickStarter,
-  apiKeys,
+  providerInfo,
   selectedProvider,
   onSelectProvider,
 }: Props) {
@@ -38,7 +36,7 @@ export default function ChatArea({
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages.length, isPending])
+  }, [messages, isPending])
 
   function submit() {
     const content = input.trim()
@@ -56,7 +54,8 @@ export default function ChatArea({
   }
 
   const showEmpty = messages.length === 0
-  const noKeysAtAll = PROVIDERS.every((p) => !hasKey(apiKeys, p))
+  const noProviders = PROVIDERS.every((p) => !hasProvider(providerInfo, p))
+  const lastId = messages.length ? messages[messages.length - 1]!.id : null
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -68,8 +67,7 @@ export default function ChatArea({
               안녕 {getVocativeName(student.name)}!
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              궁금한 게 있으면 편하게 물어봐. 아래 버튼으로 자주 쓰는 도움도
-              바로 받을 수 있어.
+              탐구하고 싶은 게 있으면 편하게 물어봐. 아래 버튼으로 시작해도 좋아.
             </p>
             <ConversationStarters onPick={onPickStarter} disabled={isPending} />
           </div>
@@ -80,39 +78,29 @@ export default function ChatArea({
                 key={m.id}
                 message={m}
                 studentName={student.name}
+                streaming={isPending && m.id === lastId && m.role === 'assistant'}
               />
             ))}
-            {isPending && (
-              <div className="flex gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 ring-1 ring-slate-200 text-sm">
-                  🤖
-                </div>
-                <div className="rounded-2xl bg-white px-4 py-2.5 text-sm text-slate-400 shadow-sm ring-1 ring-slate-100">
-                  생각하는 중…
-                </div>
-              </div>
-            )}
             <div ref={listEndRef} />
           </div>
         )}
       </div>
 
       <div className="border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
-        {/* 모델 선택 칩 row — 명세상 입력창 옆 영역에 배치 */}
+        {/* 모델 선택 — 대화 중간에 바꿔도 다음 메시지부터 이어서 적용된다. */}
         <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[11px] font-medium text-slate-400">
-            모델
-          </span>
+          <span className="mr-1 text-[11px] font-medium text-slate-400">모델</span>
           {PROVIDERS.map((p) => {
-            const enabled = hasKey(apiKeys, p)
+            const enabled = hasProvider(providerInfo, p)
             const active = selectedProvider === p
+            const modelName = providerInfo?.models?.[p]
             return (
               <button
                 key={p}
                 type="button"
                 onClick={() => onSelectProvider(p)}
                 disabled={!enabled}
-                title={enabled ? SHORT_LABEL[p] : `${SHORT_LABEL[p]} 키 미설정`}
+                title={enabled ? modelName : `${PROVIDER_LABEL[p]} 키 미설정`}
                 className={[
                   'rounded-full px-3 py-1 text-xs font-medium transition',
                   active
@@ -122,14 +110,14 @@ export default function ChatArea({
                       : 'cursor-not-allowed bg-slate-50 text-slate-300',
                 ].join(' ')}
               >
-                {SHORT_LABEL[p]}
+                {PROVIDER_LABEL[p]}
                 {!enabled && <span className="ml-1 text-[10px]">·키 없음</span>}
               </button>
             )
           })}
-          {noKeysAtAll && (
+          {noProviders && (
             <span className="ml-1 text-[10px] text-amber-600">
-              · 환경 변수에 API 키가 없습니다
+              · 서버에 API 키가 설정되지 않았습니다
             </span>
           )}
         </div>
@@ -149,13 +137,23 @@ export default function ChatArea({
             placeholder="메시지를 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)"
             className="max-h-40 min-h-[44px] flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
           />
-          <button
-            type="submit"
-            disabled={!input.trim() || isPending}
-            className="h-11 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-500 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 transition hover:from-indigo-700 hover:to-indigo-600 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none"
-          >
-            전송
-          </button>
+          {isPending ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="h-11 shrink-0 rounded-2xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+            >
+              중지
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!input.trim()}
+              className="h-11 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-500 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 transition hover:from-indigo-700 hover:to-indigo-600 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none"
+            >
+              전송
+            </button>
+          )}
         </form>
       </div>
     </div>

@@ -1,8 +1,8 @@
 // localStorage 래퍼. 키 네임스페이스를 한 곳에 모으고,
 // JSON 직렬화/역직렬화와 quota/SecurityError 예외를 흡수한다.
 //
-// 비밀(LLM API 키, MCP 토큰)은 더 이상 localStorage에 저장하지 않는다.
-// 모두 빌드 타임 환경 변수(VITE_*)로 주입된다. src/lib/env.ts 참고.
+// 비밀(LLM API 키)은 클라이언트에 없다. Netlify Function(/api/chat) 서버에서만
+// 환경 변수(ANTHROPIC_API_KEY 등)로 읽는다. 여기엔 대화/UI 상태만 저장한다.
 //
 // 키 컨벤션:
 //   chatbot.currentStudent              현재 로그인 학생

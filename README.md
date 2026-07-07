@@ -1,273 +1,100 @@
-# homerome_chatbot — 학급 전용 멀티 LLM 챗봇
+# 학생용 멀티 LLM 탐구 챗봇
 
-중학교 한 학급(예: 3학년 5반)이 사용하는 **클라이언트 사이드 단독 동작** 챗봇 웹앱입니다.
-서버/DB가 없습니다. 학생 명부는 정적 JSON, API 키와 Drive 인증 정보는 **빌드 시점 환경 변수**(Netlify)로 주입됩니다.
+학생이 **Claude / GPT / Gemini** 중 모델을 골라 대화하는 학급용 챗봇입니다.
+대화 내역은 **오직 브라우저(localStorage)에만** 저장되고(서버·DB 저장 없음),
+AI가 만든 HTML 코드는 **바로 미리보기(라이브 프리뷰)** 할 수 있습니다.
 
-- 학번 입력 → 명부에서 이름 조회 → "안녕 OOO!" 다정한 호격 인사로 대화 시작
-- 입력창 위에서 **Claude / Gemini / OpenAI** 중 모델 선택 (등록된 키가 있는 모델만 활성화)
-- 학급 **Google Drive 폴더**의 자료를 자동으로 참고 (Claude는 PDF 내용까지 첨부)
-- 대화 스타터 버튼 4종으로 자주 쓰는 흐름 한 번에 실행
-- 학생별 대화 기록이 사이드바에 누적 (숨기기 가능)
+- **프런트엔드**: Vite + React + TypeScript + Tailwind CSS
+- **백엔드**: Netlify Functions (`netlify/functions/`) — API 프록시 전용
+- **배포**: Netlify
+- **저장소·DB 없음**: 대화는 전부 클라이언트 `localStorage`
 
-> ⚠️ **보안 모델 안내** — 환경 변수(`VITE_*`)는 빌드 산출물 JS 번들에 평문으로 인라인됩니다.
-> 학교/학급 단위의 제한된 사용자 그룹에서만 운영하세요. 공개 인터넷에 노출하면
-> 누구나 브라우저에서 키를 추출할 수 있습니다.
+> 언어에 대해: 요청서는 JavaScript를 예시로 들었지만, 기존 프로젝트가 이미
+> 동작하는 TypeScript라서 타입 안전성을 유지하기 위해 TypeScript로 구현했습니다.
 
----
+## 보안 설계 (핵심)
 
-## 빠른 시작
+- **API 키는 프런트엔드 번들에 절대 포함되지 않습니다.** `VITE_*` 로 키를 노출하지 않습니다.
+- 브라우저는 우리 Netlify Function(`/api/chat`)만 호출하고, **키는 함수 안(서버)에서만** 읽습니다.
+- 프로바이더로는 **선택된 모델과 메시지 배열만** 전달합니다(학번 등 사용자 식별정보 미포함).
+- 세 키는 서버 환경변수로만 읽습니다: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`.
+
+빌드 산출물에 키가 없는지 확인:
+
+```bash
+npm run build
+grep -R "sk-ant\|sk-proj\|AIza" dist/   # 아무것도 안 나와야 정상
+```
+
+## 로그인 (학번 + 개인 코드)
+
+학생은 **학번과 개인 코드**를 함께 입력해야 접속합니다(다른 학생 학번만으로는 불가).
+명부와 코드는 `src/data/roster.json` 에 하드코딩되어 있습니다. 인증에 이름은
+사용하지 않습니다(이름은 환영 인사에만 표시).
+
+## 로컬 실행
 
 ```bash
 npm install
-cp .env.example .env       # 또는 .env 를 직접 편집
-# .env 의 키를 채운 뒤
-npm run dev
 ```
 
-`http://localhost:5173/` 에서 실행됩니다. 정적 빌드는 `npm run build` → `dist/`.
+`.env.example` 을 복사해 `.env` 로 만들고 키를 채웁니다(사용할 모델의 키만 채워도 됨):
 
-요구 사항: Node.js 18 이상.
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AIza...
+```
 
----
-
-## 1) 환경 변수 — 이 앱의 모든 비밀
-
-키와 토큰은 모두 환경 변수로 관리합니다. 학생 PC에는 **어떤 비밀도 저장되지 않습니다.**
-
-### .env (로컬 개발)
+함수까지 함께 띄우려면 **`netlify dev`** 로 실행하세요(그래야 `/api/chat` 이 동작합니다):
 
 ```bash
-# LLM API 키 (사용할 모델의 키만 채우면 됩니다)
-VITE_ANTHROPIC_API_KEY=sk-ant-...
-VITE_OPENAI_API_KEY=sk-...
-VITE_GEMINI_API_KEY=...
-
-# Google Drive (서비스 계정 + 폴더 ID 방식)
-VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL=chatbot@<project>.iam.gserviceaccount.com
-VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
-VITE_GOOGLE_DRIVE_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv
+npx netlify dev
 ```
 
-`.env` 는 `.gitignore` 에 포함되어 있어 GitHub에 올라가지 않습니다.
-GitHub에 올라가는 템플릿은 `.env.example` 이며, **여기에는 절대 실제 값을 넣지 마세요.**
+`npm run dev`(Vite 단독)로도 화면은 뜨지만, `/api/*` 함수가 없어 전송 시 실패합니다.
 
-> 💡 **가장 간단한 셋업**: 서비스 계정 JSON 파일 전체를 작은따옴표로 감싸서
-> `VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` 에 통째로 넣으면 앱이 자동으로
-> `private_key` / `client_email` 을 꺼내 씁니다. EMAIL 변수는 비워둬도 됩니다.
+## 배포 (Netlify)
 
-### Netlify (배포)
+1. GitHub 에 코드 푸시
+2. Netlify → **New site from Git** → 저장소 연결
+3. 빌드 설정은 `netlify.toml` 이 자동 적용 (Build: `npm run build`, Publish: `dist`, Functions: `netlify/functions`)
+4. **Site settings → Environment variables** 에 키 3개 등록: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` (VITE_ 접두사 없이!)
+5. 배포 후 재배포하면 키가 반영됩니다.
 
-1. https://app.netlify.com → 사이트 → **Site settings → Environment variables**
-2. 위 `.env` 와 동일한 이름/값으로 모두 등록
-3. 변경 후에는 **Deploys → Trigger deploy → Deploy site** 로 재배포
+`/api/chat`, `/api/providers` 는 `netlify.toml` 의 리다이렉트로 함수에 매핑되어 있습니다.
 
-`netlify.toml` 에 빌드 명령과 publish 디렉터리가 정의돼 있어, GitHub 리포지터리만 연결하면 자동 빌드됩니다.
+## 모델 교체 방법
 
-### 키 발급 페이지
+`netlify/functions/lib/models.mts` 의 `MODELS` 객체에서 각 프로바이더의 `model` 값을
+바꾸면 됩니다. 예를 들어 비용을 낮추려면 Claude 를 `claude-haiku-4-5` 로 교체하세요.
 
-| 제공자 | 모델 | 키 발급 페이지 |
-| --- | --- | --- |
-| Anthropic (Claude) | `claude-sonnet-4-5` | https://console.anthropic.com/ |
-| OpenAI | `gpt-4.1` | https://platform.openai.com/api-keys |
-| Google (Gemini) | `gemini-2.5-pro` | https://aistudio.google.com/app/apikey |
-
----
-
-## 2) 학생 명부 편집
-
-`src/data/roster.json` 파일을 수정합니다.
-
-```json
-{
-  "classInfo": { "grade": 3, "classNum": 5, "year": 2026 },
-  "students": [
-    { "studentId": "30501", "name": "강한솔" },
-    { "studentId": "30502", "name": "김나연" }
-  ]
+```ts
+export const MODELS = {
+  anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' }, // ← 여기서 교체
+  openai:    { model: 'gpt-4.1',         envKey: 'OPENAI_API_KEY' },
+  gemini:    { model: 'gemini-2.5-pro',  envKey: 'GEMINI_API_KEY' },
 }
 ```
 
-- `studentId` 는 정확 일치로 매칭됩니다(앞뒤 공백만 자동 제거).
-- 명부에 없는 학번을 입력하면 "명부에 없는 학번입니다. 선생님께 문의하세요." 안내가 표시됩니다.
-- **이름 외에 민감 정보(생년월일, 연락처 등)는 절대 넣지 마세요.**
+기본값은 Claude 최상위 모델(`claude-opus-4-8`)입니다. 학급 규모·비용에 맞게 조정하세요.
 
-수정 후 `git push` → Netlify 자동 재배포 → 학생들이 새 명부로 사용.
+## 주요 기능
 
----
+- **모델 선택**: 하단 칩에서 Claude/GPT/Gemini 선택. 키가 없는 모델은 비활성.
+  대화 중간에 바꿔도 다음 메시지부터 이어서 적용됩니다.
+- **스트리밍**: 답변이 토큰 단위로 실시간 표시(SSE). "중지" 버튼으로 생성 취소.
+- **최근 항목**: 좌측 사이드바에 대화 목록. 클릭해 이어보기, ✎ 이름변경, 🗑 삭제.
+  첫 메시지로 제목 자동 생성.
+- **코드 라이브 미리보기**: 코드블록에 언어 라벨·복사 버튼. `html` 코드블록은
+  "미리보기" 탭에서 **샌드박스 iframe**(`sandbox="allow-scripts"`, `srcdoc`)으로 즉시 실행.
+- **내보내기/가져오기**: 대화 기록을 JSON 으로 저장/복원.
+- **모바일 반응형**: 사이드바 토글.
 
-## 3) Google Drive 학급 자료 연동
+## 알려진 한계
 
-학급 자료(평가계획서, 탐구활동 PDF 등)는 **하나의 Drive 폴더**에 모아 두고,
-그 폴더를 **서비스 계정 이메일에 뷰어 권한으로 공유**하면 끝입니다.
-앱은 학생이 스타터를 클릭하거나 자료 관련 질문을 할 때 자동으로 폴더 내용을 읽어 LLM에 전달합니다.
-
-**셋업 절차** (한 번만)
-
-1. **Google Cloud Console** → 새 프로젝트 생성 (예: `class-chatbot`)
-2. **API & Services → Library → Google Drive API → Enable**
-3. **IAM & Admin → Service Accounts → Create service account**
-   - 이름: `class-chatbot`
-   - 역할은 비워 두어도 됩니다 (폴더에서 직접 공유로 권한 부여)
-4. 생성된 서비스 계정 → **Keys → Add key → Create new key → JSON** → 다운로드
-5. **Google Drive** 에 학급 자료 폴더 생성 (예: "3학년 5반 자료")
-   - 폴더 우클릭 → **공유** → 위 서비스 계정 이메일을 **뷰어** 로 추가
-   - 폴더 URL `https://drive.google.com/drive/folders/<여기가_FOLDER_ID>` 에서 ID 추출
-6. 환경 변수 등록 (둘 중 한 방식)
-
-   **방식 A (가장 간단) — JSON 통째**
-   ```bash
-   VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL=
-   VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY='{"type":"service_account","client_email":"...","private_key":"-----BEGIN..."...}'
-   VITE_GOOGLE_DRIVE_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv
-   ```
-   작은따옴표로 감싸면 큰따옴표 충돌 없음. 앱이 자동으로 `private_key` / `client_email` 을 추출합니다.
-
-   **방식 B — 분해**
-   ```bash
-   VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL=class-chatbot@<프로젝트>.iam.gserviceaccount.com
-   VITE_GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
-   VITE_GOOGLE_DRIVE_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv
-   ```
-
-**운영 메모**
-
-- 새 자료는 그냥 Drive 폴더에 끌어다 놓으면 끝. 앱 재배포 불필요(다음 호출 시 최신 목록 반영).
-- PDF 파일명·설명을 잘 적어두면 LLM이 자료를 더 정확히 찾아 줍니다.
-- Claude 모델 사용 중에는 폴더 안 PDF 가 자동 첨부됩니다 (최대 5개, 합계 10MB). 초과분은 자동 제외 후 학생에게 안내.
-- OpenAI/Gemini 사용 중에는 PDF 첨부 대신 파일 목록 텍스트만 LLM 컨텍스트로 전달됩니다.
-- 서비스 계정 키는 한 번 만들면 만료 없음. 누출 의심 시 Cloud Console에서 Disable / Delete key 후 재발급.
-- 디버깅: 브라우저 콘솔(F12)에 `[drive] fetchDriveContext ...` 로그가 출력됩니다.
-
----
-
-## 4) AI 아이콘 교체
-
-기본 아이콘은 `public/ai-icon.png` (256×256 인디고 배경 + "AI" 글씨) 입니다.
-교사가 자유롭게 교체할 수 있습니다.
-
-- 권장 사이즈: 256×256 정사각 PNG
-- 같은 경로/같은 파일명 (`public/ai-icon.png`) 으로 덮어쓰고 `npm run build` → Netlify 자동 배포
-- 캐시 때문에 즉시 반영이 안 되면 학생들에게 새로고침(Ctrl+F5) 안내
-
-학생 메시지 아바타는 학생 이름 첫 글자가 인디고 배경에 표시됩니다.
-
----
-
-## 5) 대화 스타터 편집
-
-`src/data/starters.json` 을 수정합니다. 기본 4개:
-
-```json
-{
-  "starters": [
-    {
-      "id": "evalplan",
-      "emoji": "📚",
-      "label": "평가계획서 보기",
-      "prompt": "학급 Google Drive 폴더의 평가계획서를 과목별로 정리하고 핵심 내용을 알려줘.",
-      "requiresDrive": true
-    }
-  ]
-}
-```
-
-- `requiresDrive: true` 인 스타터는 클릭 시 Drive 폴더 내용을 LLM에 컨텍스트로 자동 첨부합니다.
-- 학년/과목별 흔한 질문을 미리 등록해 두면 학생이 클릭만으로 자주 쓰는 흐름을 실행할 수 있습니다.
-
----
-
-## 6) Netlify 배포 절차
-
-1. GitHub에 푸시 (`.env` 는 제외됨)
-2. https://app.netlify.com → **Add new site → Import from Git** → 이 리포지터리 선택
-3. 빌드 설정은 `netlify.toml` 이 자동으로 처리:
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-4. **Site settings → Environment variables** 에서 위 `.env` 키들을 모두 등록
-5. **Deploys → Trigger deploy → Deploy site** 로 첫 배포
-6. 이후에는 `git push main` 만으로 자동 배포
-
-### 다른 정적 호스팅 (참고)
-
-- **Vercel**: Framework Preset `Vite` 자동 인식, 환경 변수는 대시보드에서 등록
-- **Cloudflare Pages**: Build command `npm run build`, output `dist`, Environment variables 등록
-
----
-
-## 7) 디렉터리 구조
-
-```
-homerome_chatbot/
-├── public/
-│   └── ai-icon.png              # 교사가 교체할 AI 아이콘
-├── src/
-│   ├── components/
-│   │   ├── Sidebar.tsx          # 대화 기록 + 새 대화 + 초기화
-│   │   ├── ChatArea.tsx         # 메시지 + 모델 선택 칩 + 입력창
-│   │   ├── MessageBubble.tsx
-│   │   ├── ConversationStarters.tsx
-│   │   └── StudentLoginModal.tsx
-│   ├── lib/
-│   │   ├── llm/
-│   │   │   ├── index.ts         # sendMessage 통합
-│   │   │   ├── claude.ts        # Anthropic + PDF 첨부
-│   │   │   ├── openai.ts
-│   │   │   ├── gemini.ts
-│   │   │   └── types.ts
-│   │   ├── drive/
-│   │   │   ├── auth.ts          # 서비스 계정 → JWT → access_token
-│   │   │   └── index.ts         # listFolderFiles / fetchDriveContext
-│   │   ├── env.ts               # 환경 변수 → ApiKeys / DriveConfig
-│   │   ├── storage.ts           # localStorage 래퍼 (학생/대화 기록만)
-│   │   └── roster.ts            # 학번-이름 매칭 + 다정한 호격
-│   ├── data/
-│   │   ├── roster.json          # 학생 명부
-│   │   └── starters.json        # 대화 스타터
-│   ├── types/index.ts
-│   ├── App.tsx
-│   ├── main.tsx
-│   └── vite-env.d.ts
-├── .env                          # 로컬용(gitignore)
-├── .env.example                  # 템플릿(git 추적)
-├── netlify.toml
-├── package.json
-└── README.md
-```
-
-`localStorage` 에 저장되는 데이터: 현재 학생, 모델 선택, 사이드바 상태, 학생별 대화 기록.
-**API 키와 Drive 인증 정보는 학생 PC에 저장되지 않습니다.**
-
----
-
-## 8) 보안·운영 주의사항
-
-- `VITE_*` 환경 변수는 Vite가 빌드할 때 **JS 번들에 평문으로 인라인**합니다.
-  배포된 사이트의 소스를 보면 누구나 키를 추출할 수 있습니다.
-- 따라서 이 앱은 **학교/학급 단위의 폐쇄적 운영**(IP 제한, 학생만 알 수 있는 URL 등)을 전제로 합니다.
-- API 사용량 폭증 위험이 우려되면 각 키 제공자 대시보드에서 **월별 사용량 한도(spending limit)** 를 반드시 설정하세요.
-- 학생 명부에는 학번/이름만 포함하세요(연락처/생년월일 금지).
-- 공용 PC에서는 좌측 하단 **"내 데이터 초기화"** 사용을 학생에게 안내하세요.
-  (대화 기록 + 로그인 정보만 삭제, 다른 학생의 데이터에는 영향 없음)
-
----
-
-## 9) 개발/검증 명령
-
-```bash
-npm run dev        # 개발 서버 (http://localhost:5173)
-npm run build      # 정적 빌드 → dist/
-npm run preview    # 빌드 결과물 로컬 미리보기
-npm run typecheck  # 타입 검사만 수행
-```
-
----
-
-## 10) 기술 스택
-
-- Vite + React 18 + TypeScript + Tailwind CSS
-- `@anthropic-ai/sdk` (Claude + PDF document block)
-- `openai` (gpt-4.1)
-- `@google/generative-ai` (gemini-2.5-pro)
-- Google Drive API v3 (서비스 계정 JWT 인증, Web Crypto API)
-- 폰트: Pretendard (CDN)
-- 디자인 시안: Stitch 프로젝트 `13087988346671586661`
+- **키 노출은 없지만 호출량 제한(rate limit)** 은 각 프로바이더 계정 정책을 따릅니다.
+  많은 학생이 동시에 쓰면 429(사용량 한도)가 날 수 있습니다 — 그때는 잠시 후 재시도.
+- **함수 실행 시간**: Netlify Functions 기본 실행 시간 제한이 있어, 매우 긴 답변은
+  중간에 끊길 수 있습니다(스트리밍이라 대부분 문제 없음).
+- 대화는 기기 로컬 저장이라, 브라우저를 바꾸거나 데이터를 지우면 기록이 사라집니다.

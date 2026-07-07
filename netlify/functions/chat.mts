@@ -1,0 +1,111 @@
+// POST /api/chat  (netlify.toml 이 /.netlify/functions/chat 로 리다이렉트)
+// ----------------------------------------------------------------------------
+// 브라우저는 오직 이 함수만 호출한다. 실제 프로바이더 API 키는 서버 환경변수로만
+// 읽고, 프론트엔드 번들/응답 어디에도 노출하지 않는다.
+// 요청 body: { provider: "anthropic"|"openai"|"gemini", messages: [{role, content}] }
+// 응답: text/event-stream (SSE). 이벤트는 다음 세 종류의 JSON 페이로드.
+//   data: {"delta":"...토큰..."}
+//   data: {"done":true}
+//   data: {"error":"사용자용 메시지"}
+// ----------------------------------------------------------------------------
+
+import { MODELS, SYSTEM_PROMPT, isProvider, type Provider } from './lib/models.mts'
+import { streamProvider, ProviderError } from './lib/llm.mts'
+
+interface ChatBody {
+  provider?: unknown
+  messages?: unknown
+}
+
+function json(status: number, data: unknown): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  })
+}
+
+function sanitizeMessages(raw: unknown): Array<{ role: 'user' | 'assistant'; content: string }> | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const out: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  for (const m of raw) {
+    if (!m || typeof m !== 'object') return null
+    const role = (m as any).role
+    const content = (m as any).content
+    if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string') return null
+    out.push({ role, content })
+  }
+  return out
+}
+
+export default async function handler(req: Request): Promise<Response> {
+  if (req.method !== 'POST') {
+    return json(405, { error: 'POST 만 허용됩니다.' })
+  }
+
+  let body: ChatBody
+  try {
+    body = (await req.json()) as ChatBody
+  } catch {
+    return json(400, { error: '요청 본문(JSON)을 해석할 수 없습니다.' })
+  }
+
+  const provider = body.provider
+  if (!isProvider(provider)) {
+    return json(400, { error: '알 수 없는 provider 입니다. (anthropic | openai | gemini)' })
+  }
+
+  const messages = sanitizeMessages(body.messages)
+  if (!messages) {
+    return json(400, { error: 'messages 형식이 올바르지 않습니다.' })
+  }
+
+  const cfg = MODELS[provider as Provider]
+  const apiKey = process.env[cfg.envKey]?.trim()
+  if (!apiKey) {
+    return json(503, {
+      error: `이 모델의 API 키가 서버에 설정되어 있지 않습니다. 선생님/운영자에게 문의하세요. (${cfg.envKey})`,
+    })
+  }
+
+  // 프로바이더로는 선택된 모델과 메시지 배열만 전달한다(사용자 식별정보 없음).
+  const gen = streamProvider({
+    provider: provider as Provider,
+    apiKey,
+    model: cfg.model,
+    system: SYSTEM_PROMPT,
+    messages,
+  })
+
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (obj: unknown) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
+      try {
+        for await (const delta of gen) {
+          if (delta) send({ delta })
+        }
+        send({ done: true })
+      } catch (err) {
+        const message =
+          err instanceof ProviderError
+            ? err.message
+            : err instanceof Error
+              ? `오류가 발생했습니다: ${err.message}`
+              : '알 수 없는 오류가 발생했습니다.'
+        send({ error: message })
+      } finally {
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    },
+  })
+}

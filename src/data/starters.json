@@ -1,32 +1,28 @@
 {
   "starters": [
     {
-      "id": "evalplan",
-      "emoji": "📚",
-      "label": "평가계획서 보기",
-      "prompt": "학급 Google Drive 폴더의 평가계획서를 과목별로 정리하고 핵심 내용을 알려줘.",
-      "requiresDrive": true
+      "id": "research-topic",
+      "emoji": "🔎",
+      "label": "탐구 주제 잡기",
+      "prompt": "탐구활동 주제를 정하고 싶어. 관심 분야를 알려주면 탐구할 만한 구체적인 주제와 탐구 질문을 몇 가지 제안해줘."
     },
     {
-      "id": "research",
-      "emoji": "🔍",
-      "label": "탐구활동 자료",
-      "prompt": "학급 Google Drive 폴더의 탐구활동 관련 자료를 찾아 각 자료가 어떤 주제·활동인지 정리해줘.",
-      "requiresDrive": true
-    },
-    {
-      "id": "study-help",
+      "id": "concept-help",
       "emoji": "💡",
-      "label": "학습 도움 받기",
-      "prompt": "학습 중에 어려운 개념이 있는데 도움받고 싶어. 어떤 부분이 어려운지 알려주면 차근차근 설명해줘.",
-      "requiresDrive": false
+      "label": "개념 이해하기",
+      "prompt": "어려운 개념이 있어서 도움받고 싶어. 어떤 부분이 헷갈리는지 알려주면 예시와 함께 차근차근 설명해줘."
+    },
+    {
+      "id": "code-demo",
+      "emoji": "🧩",
+      "label": "코드로 만들어보기",
+      "prompt": "간단한 웹 페이지나 시각화를 HTML/CSS/JS로 만들어줘. 바로 미리보기할 수 있게 하나의 html 코드블록으로 완성해줘. 먼저 무엇을 만들지 물어봐줘."
     },
     {
       "id": "writing-help",
       "emoji": "✍️",
       "label": "글쓰기 도움",
-      "prompt": "글쓰기를 도와줘. 내가 쓴 글을 다듬거나, 글감을 잡거나, 구조를 짜는 걸 도와줄 수 있어.",
-      "requiresDrive": false
+      "prompt": "탐구 보고서나 글쓰기를 도와줘. 내가 쓴 글을 다듬거나, 구조를 짜거나, 글감을 잡는 걸 도와줄 수 있어."
     }
   ]
 }
