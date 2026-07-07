@@ -66,11 +66,12 @@ npx netlify dev
 
 ## 소셜 공유 썸네일(OG 이미지)
 
-`public/og_image/` 폴더에 **`og.png`**(권장 1200×630)를 넣으면 카카오톡·페북 등에
-링크를 공유할 때 그 이미지가 썸네일로 나옵니다. `index.html` 의 `og:image`/
-`twitter:image` 가 `/og_image/og.png` 를 가리킵니다. 자세한 내용은
-`public/og_image/README.md` 참고. (일부 크롤러는 절대 URL 을 요구하므로 배포 도메인이
-정해지면 전체 주소로 바꾸는 것이 안정적입니다.)
+`public/og_image/` 폴더의 **`og.png`**(1197×630)가 카카오톡·페북 등에 링크를 공유할 때
+썸네일로 나옵니다. `index.html` 의 `og:image`/`twitter:image` 가 배포 도메인 절대
+URL(`https://homechatbot.netlify.app/og_image/og.png`)을 가리킵니다. 이미지를 바꾸려면
+같은 이름 `og.png` 로 덮어쓰세요. ⚠️ Windows 확장자 숨김 주의: 실제 파일 확장자와
+`index.html` 의 경로가 일치해야 합니다(불일치 시 404 → 흰 박스) —
+`public/og_image/README.md` 참고.
 
 ## 모델 교체 방법
 
