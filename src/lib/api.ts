@@ -1,7 +1,7 @@
 // 브라우저 → Netlify Function(/api/chat, /api/providers) 통신 레이어.
 // API 키는 절대 여기(클라이언트)에 없다. 서버 함수가 대신 프로바이더를 호출한다.
 
-import type { LlmProvider, ProviderInfo } from '@/types'
+import type { Attachment, LlmProvider, Message, ProviderInfo } from '@/types'
 
 // 클라이언트 provider('claude') → 서버 body provider('anthropic') 매핑.
 const CLIENT_TO_SERVER: Record<LlmProvider, string> = {
@@ -32,9 +32,15 @@ export function pickInitialProvider(
   return PROVIDER_ORDER.find((p) => hasProvider(info, p)) ?? null
 }
 
+// 서버로 보내는 첨부는 UI 표시용 id/name 을 뺀 최소 형태.
+function toWireAttachments(atts?: Attachment[]) {
+  if (!atts?.length) return undefined
+  return atts.map((a) => ({ kind: a.kind, mediaType: a.mediaType, data: a.data, name: a.name }))
+}
+
 export interface StreamChatArgs {
   provider: LlmProvider
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages: Message[]
   onDelta: (text: string) => void
   signal?: AbortSignal
 }
@@ -46,10 +52,16 @@ export interface StreamChatArgs {
 export async function streamChat(args: StreamChatArgs): Promise<string> {
   const { provider, messages, onDelta, signal } = args
 
+  const wireMessages = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+    attachments: toWireAttachments(m.attachments),
+  }))
+
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ provider: CLIENT_TO_SERVER[provider], messages }),
+    body: JSON.stringify({ provider: CLIENT_TO_SERVER[provider], messages: wireMessages }),
     signal,
   })
 

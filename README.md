@@ -64,6 +64,14 @@ npx netlify dev
 
 `/api/chat`, `/api/providers` 는 `netlify.toml` 의 리다이렉트로 함수에 매핑되어 있습니다.
 
+## 소셜 공유 썸네일(OG 이미지)
+
+`public/og_image/` 폴더에 **`og.png`**(권장 1200×630)를 넣으면 카카오톡·페북 등에
+링크를 공유할 때 그 이미지가 썸네일로 나옵니다. `index.html` 의 `og:image`/
+`twitter:image` 가 `/og_image/og.png` 를 가리킵니다. 자세한 내용은
+`public/og_image/README.md` 참고. (일부 크롤러는 절대 URL 을 요구하므로 배포 도메인이
+정해지면 전체 주소로 바꾸는 것이 안정적입니다.)
+
 ## 모델 교체 방법
 
 `netlify/functions/lib/models.mts` 의 `MODELS` 객체에서 각 프로바이더의 `model` 값을
@@ -72,8 +80,8 @@ npx netlify dev
 ```ts
 export const MODELS = {
   anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' }, // ← 여기서 교체
-  openai:    { model: 'gpt-4.1',         envKey: 'OPENAI_API_KEY' },
-  gemini:    { model: 'gemini-2.5-pro',  envKey: 'GEMINI_API_KEY' },
+  openai:    { model: 'gpt-5',           envKey: 'OPENAI_API_KEY' },
+  gemini:    { model: 'gemini-3.1-pro',  envKey: 'GEMINI_API_KEY' },
 }
 ```
 
@@ -83,11 +91,20 @@ export const MODELS = {
 
 - **모델 선택**: 하단 칩에서 Claude/GPT/Gemini 선택. 키가 없는 모델은 비활성.
   대화 중간에 바꿔도 다음 메시지부터 이어서 적용됩니다.
-- **스트리밍**: 답변이 토큰 단위로 실시간 표시(SSE). "중지" 버튼으로 생성 취소.
+- **스트리밍**: 답변이 실시간 표시(SSE). 렌더링을 ~50ms 로 묶고 스트리밍 중에는
+  일반 텍스트로, 완료 시 마크다운으로 그려 부드럽게 표시. "중지" 버튼으로 취소.
+- **파일 첨부**: 📎 버튼으로 이미지·PDF 업로드(파일당 4MB 이하). 업로드한 파일은
+  **이 기기(localStorage)에만** 저장되며 서버 DB 에는 저장하지 않습니다.
+  이미지는 세 모델 모두, PDF 는 Claude·Gemini 에서 인식합니다(GPT 는 이미지만).
 - **최근 항목**: 좌측 사이드바에 대화 목록. 클릭해 이어보기, ✎ 이름변경, 🗑 삭제.
   첫 메시지로 제목 자동 생성.
 - **코드 라이브 미리보기**: 코드블록에 언어 라벨·복사 버튼. `html` 코드블록은
   "미리보기" 탭에서 **샌드박스 iframe**(`sandbox="allow-scripts"`, `srcdoc`)으로 즉시 실행.
+- **캔버스(문서 작성)**: 학생이 보고서·글·웹페이지 등 "문서 작성"을 요청하면, 답변의
+  산출물이 **오른쪽 캔버스 패널**에 열립니다(웹페이지는 미리보기, 문서는 렌더링).
+  캔버스에서 **PDF(브라우저 인쇄) · Word(.doc) · HTML · 마크다운(.md)** 으로 내려받을 수
+  있습니다. (동작 규칙: 모델이 산출물을 ```html 또는 ```markdown 펜스로 감싸도록
+  시스템 프롬프트가 유도 → 클라이언트가 이를 캔버스로 추출. `src/lib/artifact.ts`)
 - **내보내기/가져오기**: 대화 기록을 JSON 으로 저장/복원.
 - **모바일 반응형**: 사이드바 토글.
 
@@ -98,3 +115,7 @@ export const MODELS = {
 - **함수 실행 시간**: Netlify Functions 기본 실행 시간 제한이 있어, 매우 긴 답변은
   중간에 끊길 수 있습니다(스트리밍이라 대부분 문제 없음).
 - 대화는 기기 로컬 저장이라, 브라우저를 바꾸거나 데이터를 지우면 기록이 사라집니다.
+- **첨부파일은 localStorage(약 5MB)에 base64 로 쌓입니다.** 큰 파일을 많이 올리면
+  용량 한도에 걸려 오래된 기록 저장이 실패할 수 있으니, 필요 없는 대화는 삭제하세요.
+- 첨부파일은 답변을 위해 해당 프로바이더로 전송됩니다(로컬 저장과 별개로, AI가
+  읽으려면 전송이 필요). PDF 는 페이지 수만큼 토큰을 많이 써 rate limit 에 유의.

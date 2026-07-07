@@ -9,12 +9,25 @@
 
 import { MODELS, MAX_TOKENS, type Provider } from './models.mts'
 
+export interface WireAttachment {
+  kind: 'image' | 'pdf'
+  mediaType: string
+  data: string // base64 (no data: prefix)
+  name?: string
+}
+
+export interface WireMessage {
+  role: 'user' | 'assistant'
+  content: string
+  attachments?: WireAttachment[]
+}
+
 export interface StreamParams {
   provider: Provider
   apiKey: string
   model: string
   system: string
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  messages: WireMessage[]
 }
 
 // 사용자에게 보여줄 친절한 에러. HTTP 상태를 구분해 메시지를 만든다.
@@ -78,6 +91,25 @@ async function readError(res: Response): Promise<string> {
   }
 }
 
+// 첨부파일이 있는 메시지를 Anthropic content block 배열로 변환.
+function anthropicContent(m: WireMessage): unknown {
+  if (!m.attachments?.length) return m.content
+  const blocks: unknown[] = []
+  for (const a of m.attachments) {
+    if (a.kind === 'image') {
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } })
+    } else {
+      blocks.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: a.data },
+        title: a.name,
+      })
+    }
+  }
+  blocks.push({ type: 'text', text: m.content || '(첨부 파일을 참고해 답해주세요)' })
+  return blocks
+}
+
 // ---- Anthropic (Claude) ----------------------------------------------------
 async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -91,7 +123,7 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
       model: p.model,
       max_tokens: MAX_TOKENS,
       system: p.system,
-      messages: p.messages,
+      messages: p.messages.map((m) => ({ role: m.role, content: anthropicContent(m) })),
       stream: true,
     }),
   })
@@ -113,11 +145,28 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
   }
 }
 
+// OpenAI chat/completions 는 이미지(image_url)만 지원. PDF 는 제외하고 안내를 붙인다.
+function openaiContent(m: WireMessage): unknown {
+  if (!m.attachments?.length) return m.content
+  const images = m.attachments.filter((a) => a.kind === 'image')
+  const hasPdf = m.attachments.some((a) => a.kind === 'pdf')
+  if (images.length === 0 && !hasPdf) return m.content
+  let text = m.content
+  if (hasPdf) {
+    text = (m.content ? m.content + '\n\n' : '') + '(참고: PDF 첨부는 이 모델에서 직접 지원되지 않아 제외되었습니다. 이미지는 첨부되었습니다.)'
+  }
+  const parts: unknown[] = [{ type: 'text', text }]
+  for (const a of images) {
+    parts.push({ type: 'image_url', image_url: { url: `data:${a.mediaType};base64,${a.data}` } })
+  }
+  return parts
+}
+
 // ---- OpenAI (GPT) ----------------------------------------------------------
 async function* streamOpenAI(p: StreamParams): AsyncGenerator<string> {
   const messages = [
     { role: 'system', content: p.system },
-    ...p.messages,
+    ...p.messages.map((m) => ({ role: m.role, content: openaiContent(m) })),
   ]
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -145,10 +194,16 @@ async function* streamOpenAI(p: StreamParams): AsyncGenerator<string> {
 // ---- Gemini ----------------------------------------------------------------
 async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
   // Gemini 는 role 이 'user' | 'model' 이고, system 은 systemInstruction 으로 분리.
-  const contents = p.messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }))
+  // 이미지·PDF 모두 inlineData(base64) 로 첨부 가능.
+  const contents = p.messages.map((m) => {
+    const parts: unknown[] = []
+    if (m.content) parts.push({ text: m.content })
+    for (const a of m.attachments ?? []) {
+      parts.push({ inlineData: { mimeType: a.mediaType, data: a.data } })
+    }
+    if (parts.length === 0) parts.push({ text: '' })
+    return { role: m.role === 'assistant' ? 'model' : 'user', parts }
+  })
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(p.model)}` +
     `:streamGenerateContent?alt=sse&key=${encodeURIComponent(p.apiKey)}`

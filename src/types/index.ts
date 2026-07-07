@@ -27,11 +27,22 @@ export interface RosterFile {
 
 export type MessageRole = 'user' | 'assistant'
 
+// 첨부파일(이미지/PDF). base64 로 localStorage(대화 기록)에만 저장되며,
+// 서버 DB 에는 저장하지 않는다. LLM 에 질문할 때만 프로바이더로 전달된다.
+export interface Attachment {
+  id: string
+  kind: 'image' | 'pdf'
+  name: string
+  mediaType: string // 예: image/png, application/pdf
+  data: string // base64 (data: 접두사 제외)
+}
+
 export interface Message {
   id: string
   role: MessageRole
   content: string
   createdAt: number
+  attachments?: Attachment[]
 }
 
 export interface Conversation {

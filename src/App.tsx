@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import StudentLoginModal from '@/components/StudentLoginModal'
 import Sidebar from '@/components/Sidebar'
 import ChatArea from '@/components/ChatArea'
+import Canvas from '@/components/Canvas'
 import { storage, newId } from '@/lib/storage'
 import { getClassLabel } from '@/lib/roster'
+import { extractArtifact, type Artifact } from '@/lib/artifact'
 import { fetchProviders, hasProvider, pickInitialProvider, streamChat } from '@/lib/api'
 import { PROVIDER_LABEL } from '@/types'
 import type {
+  Attachment,
   Conversation,
   LlmProvider,
   Message,
@@ -31,6 +34,7 @@ export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isPending, setIsPending] = useState(false)
+  const [artifact, setArtifact] = useState<Artifact | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -81,6 +85,7 @@ export default function App() {
     setStudent(null)
     setConversations([])
     setActiveId(null)
+    setArtifact(null)
   }
 
   function handleToggleSidebar() {
@@ -93,6 +98,7 @@ export default function App() {
 
   function handleNewConversation() {
     setActiveId(null)
+    setArtifact(null)
   }
 
   function handleSelectConversation(id: string) {
@@ -127,6 +133,7 @@ export default function App() {
     setConversations([])
     setActiveId(null)
     setStudent(null)
+    setArtifact(null)
   }
 
   function handleSelectProvider(p: LlmProvider) {
@@ -175,8 +182,9 @@ export default function App() {
     abortRef.current?.abort()
   }
 
-  async function handleSend(content: string) {
+  async function handleSend(content: string, attachments?: Attachment[]) {
     if (!student || isPending) return
+    if (!content.trim() && !attachments?.length) return
     if (!selectedProvider || !hasProvider(providerInfo, selectedProvider)) {
       alert('사용 가능한 모델이 없습니다. 선생님/운영자에게 문의하세요.')
       return
@@ -186,8 +194,16 @@ export default function App() {
     const isNew = !activeId
     const base = isNew ? [] : (conversations.find((c) => c.id === activeId)?.messages ?? [])
 
-    const userMsg: Message = { id: newId(), role: 'user', content, createdAt: Date.now() }
+    const userMsg: Message = {
+      id: newId(),
+      role: 'user',
+      content,
+      createdAt: Date.now(),
+      attachments: attachments?.length ? attachments : undefined,
+    }
     const assistantMsg: Message = { id: newId(), role: 'assistant', content: '', createdAt: Date.now() }
+
+    const titleSeed = content.trim() || attachments?.[0]?.name || '파일 첨부'
 
     let convId = activeId
     let working: Conversation[]
@@ -195,7 +211,7 @@ export default function App() {
       convId = newId()
       const conv: Conversation = {
         id: convId,
-        title: truncateTitle(content),
+        title: truncateTitle(titleSeed),
         provider,
         messages: [userMsg, assistantMsg],
         createdAt: Date.now(),
@@ -212,14 +228,15 @@ export default function App() {
     }
     setConversations(working)
 
-    // API 로 보낼 히스토리: 이전 메시지 + 이번 사용자 메시지(빈 assistant 자리표시자는 제외).
-    const apiMessages = [...base, userMsg].map((m) => ({ role: m.role, content: m.content }))
+    // API 로 보낼 히스토리: 이전 메시지 + 이번 사용자 메시지(빈 assistant 자리표시자 제외).
+    const apiMessages: Message[] = [...base, userMsg]
 
     setIsPending(true)
     const controller = new AbortController()
     abortRef.current = controller
 
-    const applyAssistant = (updater: (prev: string) => string) => {
+    // 어시스턴트 메시지 본문을 절대값으로 설정.
+    const setAssistantContent = (text: string) => {
       setConversations((prev) =>
         prev.map((c) =>
           c.id === convId
@@ -227,7 +244,7 @@ export default function App() {
                 ...c,
                 updatedAt: Date.now(),
                 messages: c.messages.map((m) =>
-                  m.id === assistantMsg.id ? { ...m, content: updater(m.content) } : m,
+                  m.id === assistantMsg.id ? { ...m, content: text } : m,
                 ),
               }
             : c,
@@ -235,23 +252,44 @@ export default function App() {
       )
     }
 
+    // 부드러운 스트리밍: 토큰마다 렌더링하지 않고 ~50ms 로 묶어서 반영한다.
+    // (토큰마다 setState + 마크다운 재파싱을 하면 버벅인다.)
+    let acc = ''
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleFlush = () => {
+      if (flushTimer != null) return
+      flushTimer = setTimeout(() => {
+        flushTimer = null
+        setAssistantContent(acc)
+      }, 50)
+    }
+
     try {
       await streamChat({
         provider,
         messages: apiMessages,
         signal: controller.signal,
-        onDelta: (t) => applyAssistant((prev) => prev + t),
+        onDelta: (t) => {
+          acc += t
+          scheduleFlush()
+        },
       })
     } catch (err) {
       const aborted =
         controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')
       if (!aborted) {
         const reason = err instanceof Error ? err.message : String(err)
-        applyAssistant((prev) =>
-          prev ? prev + `\n\n⚠️ ${reason}` : `⚠️ 응답을 받지 못했어요.\n${reason}`,
-        )
+        acc = acc ? acc + `\n\n⚠️ ${reason}` : `⚠️ 응답을 받지 못했어요.\n${reason}`
       }
     } finally {
+      if (flushTimer != null) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      setAssistantContent(acc) // 최종본 확정
+      // 문서/웹페이지 산출물이 있으면 캔버스 자동 열기.
+      const finalArtifact = extractArtifact(acc)
+      if (finalArtifact) setArtifact(finalArtifact)
       abortRef.current = null
       setIsPending(false)
       // 최종본을 localStorage 에 저장(스트리밍 중에는 메모리에만 반영).
@@ -320,14 +358,17 @@ export default function App() {
           student={student}
           messages={messages}
           isPending={isPending}
-          onSend={(c) => void handleSend(c)}
+          onSend={(c, a) => void handleSend(c, a)}
           onStop={handleStop}
           onPickStarter={handlePickStarter}
+          onOpenArtifact={setArtifact}
           providerInfo={providerInfo}
           selectedProvider={selectedProvider}
           onSelectProvider={handleSelectProvider}
         />
       </div>
+
+      {artifact && <Canvas artifact={artifact} onClose={() => setArtifact(null)} />}
     </div>
   )
 }

@@ -21,8 +21,8 @@ export interface ModelConfig {
 export const MODELS: Record<Provider, ModelConfig> = {
   // 여기서 모델 추가/교체 ↓
   anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' },
-  openai: { model: 'gpt-4.1', envKey: 'OPENAI_API_KEY' },
-  gemini: { model: 'gemini-2.5-pro', envKey: 'GEMINI_API_KEY' },
+  openai: { model: 'gpt-5', envKey: 'OPENAI_API_KEY' },
+  gemini: { model: 'gemini-3.1-pro', envKey: 'GEMINI_API_KEY' },
 }
 
 export const PROVIDERS: Provider[] = ['anthropic', 'openai', 'gemini']
@@ -39,6 +39,14 @@ export const SYSTEM_PROMPT =
   '당신은 고등학생의 탐구활동을 돕는 친절한 AI 어시스턴트입니다. ' +
   '항상 한국어로 답하고, 학생 수준에 맞는 쉬운 설명과 예시를 사용하세요. ' +
   '코드를 보여줄 때는 반드시 언어를 명시한 마크다운 코드블록(```언어)으로 감싸세요. ' +
-  'HTML/CSS/JS 예제는 학생이 바로 미리보기할 수 있도록 되도록 하나의 완결된 ' +
-  'html 코드블록으로 제공하세요. ' +
+  '\n\n' +
+  '## 문서/산출물 작성 규칙 (캔버스)\n' +
+  '학생이 보고서·글·편지·안내문·계획서 같은 "완성된 문서"나 웹페이지 제작을 요청하면, ' +
+  '그 산출물 전체를 **하나의 코드펜스**로 감싸 제공하세요. 이 블록은 화면 오른쪽 캔버스에 ' +
+  '표시되고 학생이 PDF/Word/HTML 로 내려받을 수 있습니다.\n' +
+  '- 웹페이지/HTML/CSS/JS 는 하나의 완결된 문서로 만들어 ```html 로 감싸세요.\n' +
+  '- 그 외 문서(보고서·글 등)는 ```markdown 으로 감싸고, 맨 위에 `# 제목`을 넣으세요.\n' +
+  '- 문서 앞뒤에 한두 문장으로 간단히 안내는 하되, 문서 본문은 반드시 코드펜스 안에 두세요.\n' +
+  '- 짧은 질문·대화형 답변은 코드펜스로 감싸지 말고 평소처럼 답하세요.\n' +
+  '\n' +
   '욕설·개인정보·시험 부정행위 요청에는 응하지 말고 정중히 거절하세요.'

@@ -10,7 +10,29 @@
 // ----------------------------------------------------------------------------
 
 import { MODELS, SYSTEM_PROMPT, isProvider, type Provider } from './lib/models.mts'
-import { streamProvider, ProviderError } from './lib/llm.mts'
+import { streamProvider, ProviderError, type WireAttachment, type WireMessage } from './lib/llm.mts'
+
+// base64 첨부 1개당 상한(대략 4MB 원본 ≈ 5.3MB base64). Netlify 함수 요청 본문
+// 한도(~6MB)와 localStorage 안전을 함께 고려한 값.
+const MAX_ATTACH_BASE64 = 6 * 1024 * 1024
+
+function sanitizeAttachments(raw: unknown): WireAttachment[] | undefined {
+  if (raw == null) return undefined
+  if (!Array.isArray(raw)) return undefined
+  const out: WireAttachment[] = []
+  for (const a of raw) {
+    if (!a || typeof a !== 'object') continue
+    const kind = (a as any).kind
+    const mediaType = (a as any).mediaType
+    const data = (a as any).data
+    if ((kind !== 'image' && kind !== 'pdf') || typeof mediaType !== 'string' || typeof data !== 'string') {
+      continue
+    }
+    if (data.length > MAX_ATTACH_BASE64) continue
+    out.push({ kind, mediaType, data, name: typeof (a as any).name === 'string' ? (a as any).name : undefined })
+  }
+  return out.length ? out : undefined
+}
 
 interface ChatBody {
   provider?: unknown
@@ -24,15 +46,15 @@ function json(status: number, data: unknown): Response {
   })
 }
 
-function sanitizeMessages(raw: unknown): Array<{ role: 'user' | 'assistant'; content: string }> | null {
+function sanitizeMessages(raw: unknown): WireMessage[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null
-  const out: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  const out: WireMessage[] = []
   for (const m of raw) {
     if (!m || typeof m !== 'object') return null
     const role = (m as any).role
     const content = (m as any).content
     if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string') return null
-    out.push({ role, content })
+    out.push({ role, content, attachments: sanitizeAttachments((m as any).attachments) })
   }
   return out
 }

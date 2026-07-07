@@ -2,23 +2,54 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import MessageBubble from './MessageBubble'
 import ConversationStarters from './ConversationStarters'
 import { getVocativeName } from '@/lib/roster'
+import { newId } from '@/lib/storage'
 import { hasProvider } from '@/lib/api'
 import { PROVIDER_LABEL } from '@/types'
-import type { LlmProvider, Message, ProviderInfo, Starter, Student } from '@/types'
+import type { Attachment, LlmProvider, Message, ProviderInfo, Starter, Student } from '@/types'
+import type { Artifact } from '@/lib/artifact'
 
 interface Props {
   student: Student
   messages: Message[]
   isPending: boolean
-  onSend: (content: string) => void
+  onSend: (content: string, attachments?: Attachment[]) => void
   onStop: () => void
   onPickStarter: (s: Starter) => void
+  onOpenArtifact: (a: Artifact) => void
   providerInfo: ProviderInfo | null
   selectedProvider: LlmProvider | null
   onSelectProvider: (p: LlmProvider) => void
 }
 
 const PROVIDERS: LlmProvider[] = ['claude', 'openai', 'gemini']
+// 파일 1개 상한. localStorage 및 Netlify 함수 요청 한도를 함께 고려.
+const MAX_FILE_BYTES = 4 * 1024 * 1024
+
+function readAsAttachment(file: File): Promise<Attachment | null> {
+  const isPdf = file.type === 'application/pdf'
+  const isImage = file.type.startsWith('image/')
+  if (!isPdf && !isImage) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      const comma = result.indexOf(',')
+      if (comma === -1) return resolve(null)
+      const meta = result.slice(0, comma) // data:<mime>;base64
+      const data = result.slice(comma + 1)
+      const mediaType = meta.slice(5, meta.indexOf(';')) || file.type
+      resolve({
+        id: newId(),
+        kind: isPdf ? 'pdf' : 'image',
+        name: file.name,
+        mediaType,
+        data,
+      })
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+}
 
 export default function ChatArea({
   student,
@@ -27,12 +58,15 @@ export default function ChatArea({
   onSend,
   onStop,
   onPickStarter,
+  onOpenArtifact,
   providerInfo,
   selectedProvider,
   onSelectProvider,
 }: Props) {
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const listEndRef = useRef<HTMLDivElement | null>(null)
+  const fileRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -40,22 +74,39 @@ export default function ChatArea({
 
   function submit() {
     const content = input.trim()
-    if (!content || isPending) return
-    onSend(content)
+    if ((!content && attachments.length === 0) || isPending) return
+    onSend(content, attachments.length ? attachments : undefined)
     setInput('')
+    setAttachments([])
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    // Enter 전송 / Shift+Enter 줄바꿈
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       submit()
     }
   }
 
+  async function handleFiles(files: FileList) {
+    const next: Attachment[] = []
+    const skipped: string[] = []
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_FILE_BYTES) {
+        skipped.push(`${file.name} (4MB 초과)`)
+        continue
+      }
+      const att = await readAsAttachment(file)
+      if (att) next.push(att)
+      else skipped.push(`${file.name} (이미지/PDF만 가능)`)
+    }
+    if (next.length) setAttachments((prev) => [...prev, ...next])
+    if (skipped.length) alert('첨부하지 못한 파일:\n' + skipped.join('\n'))
+  }
+
   const showEmpty = messages.length === 0
   const noProviders = PROVIDERS.every((p) => !hasProvider(providerInfo, p))
   const lastId = messages.length ? messages[messages.length - 1]!.id : null
+  const canSend = Boolean(input.trim()) || attachments.length > 0
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -67,7 +118,7 @@ export default function ChatArea({
               안녕 {getVocativeName(student.name)}!
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              탐구하고 싶은 게 있으면 편하게 물어봐. 아래 버튼으로 시작해도 좋아.
+              탐구하고 싶은 게 있으면 편하게 물어봐. 이미지·PDF도 첨부할 수 있어.
             </p>
             <ConversationStarters onPick={onPickStarter} disabled={isPending} />
           </div>
@@ -79,6 +130,7 @@ export default function ChatArea({
                 message={m}
                 studentName={student.name}
                 streaming={isPending && m.id === lastId && m.role === 'assistant'}
+                onOpenArtifact={onOpenArtifact}
               />
             ))}
             <div ref={listEndRef} />
@@ -122,6 +174,39 @@ export default function ChatArea({
           )}
         </div>
 
+        {/* 첨부 대기 목록 */}
+        {attachments.length > 0 && (
+          <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
+            {attachments.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1"
+              >
+                {a.kind === 'image' ? (
+                  <img
+                    src={`data:${a.mediaType};base64,${a.data}`}
+                    alt={a.name}
+                    className="h-8 w-8 rounded object-cover"
+                  />
+                ) : (
+                  <span className="text-lg">📄</span>
+                )}
+                <span className="max-w-[140px] truncate text-xs text-slate-600" title={a.name}>
+                  {a.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAttachments((prev) => prev.filter((x) => x.id !== a.id))}
+                  className="text-slate-400 transition hover:text-red-500"
+                  title="제거"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -129,6 +214,26 @@ export default function ChatArea({
           }}
           className="mx-auto flex max-w-3xl items-end gap-2"
         >
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,application/pdf"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) void handleFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={isPending}
+            title="이미지·PDF 첨부"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-lg text-slate-500 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            📎
+          </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -148,7 +253,7 @@ export default function ChatArea({
           ) : (
             <button
               type="submit"
-              disabled={!input.trim()}
+              disabled={!canSend}
               className="h-11 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-500 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 transition hover:from-indigo-700 hover:to-indigo-600 disabled:cursor-not-allowed disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none"
             >
               전송
