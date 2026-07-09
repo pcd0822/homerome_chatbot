@@ -22,7 +22,7 @@ export const MODELS: Record<Provider, ModelConfig> = {
   // 여기서 모델 추가/교체 ↓
   anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' },
   openai: { model: 'gpt-5', envKey: 'OPENAI_API_KEY' },
-  gemini: { model: 'gemini-3.1-pro', envKey: 'GEMINI_API_KEY' },
+  gemini: { model: 'gemini-2.5-flash', envKey: 'GEMINI_API_KEY' },
 }
 
 export const PROVIDERS: Provider[] = ['anthropic', 'openai', 'gemini']
