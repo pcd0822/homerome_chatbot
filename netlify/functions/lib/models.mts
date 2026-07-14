@@ -25,7 +25,10 @@ export const MODELS: Record<Provider, ModelConfig> = {
   //    빠른 응답이 필요한 수업용으로는 아래처럼 비추론 모델을 권장합니다.
   anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' },
   openai: { model: 'gpt-4o', envKey: 'OPENAI_API_KEY' },
-  gemini: { model: 'gemini-2.5-flash', envKey: 'GEMINI_API_KEY' },
+  // gemini-2.5-* 는 2026-07 조기 종료(404). 항상 최신 flash 를 가리키는 별칭을 써서
+  // 앞으로 모델이 또 종료돼도 자동으로 최신으로 이어지게 한다(현재 = Gemini 3.5 Flash).
+  // 고정 ID 를 원하면 'gemini-3.5-flash'(고품질) 또는 'gemini-3.1-flash-lite'(최저가·최속) 로.
+  gemini: { model: 'gemini-flash-latest', envKey: 'GEMINI_API_KEY' },
 }
 
 export const PROVIDERS: Provider[] = ['anthropic', 'openai', 'gemini']

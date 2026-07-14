@@ -244,9 +244,11 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
       contents,
       generationConfig: {
         maxOutputTokens: MAX_TOKENS,
-        // "thinking"(사고)을 꺼서 첫 토큰을 즉시 흘린다(타임아웃/빈 응답 방지).
-        // ⚠️ thinkingBudget: 0 은 flash 계열에서만 유효. pro 로 바꾸려면 이 줄을 지우세요.
-        thinkingConfig: { thinkingBudget: 0 },
+        // 사고(thinking)를 최소로 낮춰 첫 토큰을 빨리 흘린다(타임아웃/느린 응답 방지).
+        // ⚠️ Gemini 3.x 는 thinkingBudget 이 아니라 thinkingLevel 을 쓴다('minimal'|'low'|
+        //    'medium'|'high'). 3.x 는 사고를 완전히 끌 수 없어 'minimal' 이 최저값이다.
+        //    (구형 2.5 계열로 되돌릴 경우엔 { thinkingBudget: 0 } 으로 바꿔야 함)
+        thinkingConfig: { thinkingLevel: 'minimal' },
       },
     }),
   })
