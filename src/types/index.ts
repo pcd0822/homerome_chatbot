@@ -27,14 +27,17 @@ export interface RosterFile {
 
 export type MessageRole = 'user' | 'assistant'
 
-// 첨부파일(이미지/PDF). base64 로 localStorage(대화 기록)에만 저장되며,
-// 서버 DB 에는 저장하지 않는다. LLM 에 질문할 때만 프로바이더로 전달된다.
+// 첨부파일(이미지/PDF/텍스트). base64(또는 추출 평문)로 localStorage(대화 기록)에만
+// 저장되며, 서버 DB 에는 저장하지 않는다. LLM 에 질문할 때만 프로바이더로 전달된다.
+// - image/pdf: 원본을 base64 로 담아 프로바이더에 그대로 전달
+// - text: CSV/XLSX 등을 브라우저에서 평문으로 추출해 프롬프트에 주입(세 모델 공통)
 export interface Attachment {
   id: string
-  kind: 'image' | 'pdf'
+  kind: 'image' | 'pdf' | 'text'
   name: string
-  mediaType: string // 예: image/png, application/pdf
-  data: string // base64 (data: 접두사 제외)
+  mediaType: string // 예: image/png, application/pdf, text/csv
+  data: string // image/pdf: base64(data: 접두사 제외). text: '' (미사용)
+  text?: string // kind 'text' 에서 추출한 평문(CSV/XLSX 등)
 }
 
 export interface Message {

@@ -24,11 +24,16 @@ interface Props {
 const PROVIDERS: LlmProvider[] = ['claude', 'openai', 'gemini']
 // 파일 1개 상한. localStorage 및 Netlify 함수 요청 한도를 함께 고려.
 const MAX_FILE_BYTES = 4 * 1024 * 1024
+// CSV/XLSX 에서 추출한 평문의 최대 글자 수(localStorage·프롬프트 보호).
+const MAX_TEXT_CHARS = 200 * 1024
 
-function readAsAttachment(file: File): Promise<Attachment | null> {
-  const isPdf = file.type === 'application/pdf'
-  const isImage = file.type.startsWith('image/')
-  if (!isPdf && !isImage) return Promise.resolve(null)
+function extLower(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
+}
+
+// 이미지/PDF 는 base64(data: 접두사 제외)로 읽는다.
+function readBinaryAttachment(file: File, kind: 'image' | 'pdf'): Promise<Attachment | null> {
   return new Promise((resolve) => {
     const reader = new FileReader()
     reader.onload = () => {
@@ -38,17 +43,61 @@ function readAsAttachment(file: File): Promise<Attachment | null> {
       const meta = result.slice(0, comma) // data:<mime>;base64
       const data = result.slice(comma + 1)
       const mediaType = meta.slice(5, meta.indexOf(';')) || file.type
-      resolve({
-        id: newId(),
-        kind: isPdf ? 'pdf' : 'image',
-        name: file.name,
-        mediaType,
-        data,
-      })
+      resolve({ id: newId(), kind, name: file.name, mediaType, data })
     }
     reader.onerror = () => resolve(null)
     reader.readAsDataURL(file)
   })
+}
+
+// XLSX 를 시트별 CSV 텍스트로 변환(브라우저에서 SheetJS 로 파싱).
+// SheetJS 는 용량이 커서, 실제로 엑셀을 첨부할 때만 동적 import 로 불러온다
+// (초기 번들을 가볍게 유지 → 수업 중 학생 접속 속도 보호).
+async function xlsxToText(buf: ArrayBuffer): Promise<string> {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.read(buf, { type: 'array' })
+  const parts = wb.SheetNames.map((nm) => {
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[nm]!)
+    return wb.SheetNames.length > 1 ? `# 시트: ${nm}\n${csv}` : csv
+  })
+  return parts.join('\n\n')
+}
+
+function clampText(text: string): string {
+  return text.length > MAX_TEXT_CHARS
+    ? text.slice(0, MAX_TEXT_CHARS) + '\n…(내용이 길어 일부만 표시됨)'
+    : text
+}
+
+// 파일을 첨부(Attachment)로 변환. 이미지/PDF 는 base64, CSV/XLSX 는 평문(text)으로.
+// 지원하지 않는 형식은 null.
+async function readAsAttachment(file: File): Promise<Attachment | null> {
+  const ext = extLower(file.name)
+  if (file.type === 'application/pdf' || ext === 'pdf') return readBinaryAttachment(file, 'pdf')
+  if (file.type.startsWith('image/')) return readBinaryAttachment(file, 'image')
+
+  const isCsv = file.type === 'text/csv' || ext === 'csv'
+  const isXlsx =
+    ext === 'xlsx' ||
+    ext === 'xls' ||
+    file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    file.type === 'application/vnd.ms-excel'
+
+  try {
+    if (isXlsx) {
+      const text = clampText(await xlsxToText(await file.arrayBuffer()))
+      if (!text.trim()) return null
+      return { id: newId(), kind: 'text', name: file.name, mediaType: 'text/csv', data: '', text }
+    }
+    if (isCsv) {
+      const text = clampText(await file.text())
+      if (!text.trim()) return null
+      return { id: newId(), kind: 'text', name: file.name, mediaType: 'text/csv', data: '', text }
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 export default function ChatArea({
@@ -97,7 +146,7 @@ export default function ChatArea({
       }
       const att = await readAsAttachment(file)
       if (att) next.push(att)
-      else skipped.push(`${file.name} (이미지/PDF만 가능)`)
+      else skipped.push(`${file.name} (이미지·PDF·CSV·XLSX만 가능)`)
     }
     if (next.length) setAttachments((prev) => [...prev, ...next])
     if (skipped.length) alert('첨부하지 못한 파일:\n' + skipped.join('\n'))
@@ -118,7 +167,7 @@ export default function ChatArea({
               안녕 {getVocativeName(student.name)}!
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              탐구하고 싶은 게 있으면 편하게 물어봐. 이미지·PDF도 첨부할 수 있어.
+              탐구하고 싶은 게 있으면 편하게 물어봐. 이미지·PDF·엑셀(xlsx)·CSV도 첨부할 수 있어.
             </p>
             <ConversationStarters onPick={onPickStarter} disabled={isPending} />
           </div>
@@ -189,7 +238,7 @@ export default function ChatArea({
                     className="h-8 w-8 rounded object-cover"
                   />
                 ) : (
-                  <span className="text-lg">📄</span>
+                  <span className="text-lg">{a.kind === 'text' ? '📊' : '📄'}</span>
                 )}
                 <span className="max-w-[140px] truncate text-xs text-slate-600" title={a.name}>
                   {a.name}
@@ -217,7 +266,7 @@ export default function ChatArea({
           <input
             ref={fileRef}
             type="file"
-            accept="image/*,application/pdf"
+            accept="image/*,application/pdf,.csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
             multiple
             className="hidden"
             onChange={(e) => {
@@ -229,8 +278,8 @@ export default function ChatArea({
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={isPending}
-            aria-label="이미지·PDF 첨부"
-            title="이미지·PDF 첨부"
+            aria-label="이미지·PDF·엑셀·CSV 첨부"
+            title="이미지·PDF·엑셀(xlsx)·CSV 첨부"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <svg

@@ -40,7 +40,7 @@ function AttachmentList({ message }: { message: Message }) {
           />
         ) : (
           <div key={a.id} className="flex items-center gap-2 rounded-lg bg-black/10 px-2 py-1 text-xs">
-            <span>📄</span>
+            <span>{a.kind === 'text' ? '📊' : '📄'}</span>
             <span className="max-w-[160px] truncate" title={a.name}>
               {a.name}
             </span>

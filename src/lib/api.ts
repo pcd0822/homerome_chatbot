@@ -32,10 +32,15 @@ export function pickInitialProvider(
   return PROVIDER_ORDER.find((p) => hasProvider(info, p)) ?? null
 }
 
-// 서버로 보내는 첨부는 UI 표시용 id/name 을 뺀 최소 형태.
+// 서버로 보내는 첨부는 UI 표시용 id 를 뺀 최소 형태.
+// text 첨부(CSV/XLSX)는 base64 대신 추출 평문(text)만 보낸다.
 function toWireAttachments(atts?: Attachment[]) {
   if (!atts?.length) return undefined
-  return atts.map((a) => ({ kind: a.kind, mediaType: a.mediaType, data: a.data, name: a.name }))
+  return atts.map((a) =>
+    a.kind === 'text'
+      ? { kind: a.kind, mediaType: a.mediaType, name: a.name, text: a.text }
+      : { kind: a.kind, mediaType: a.mediaType, data: a.data, name: a.name },
+  )
 }
 
 export interface StreamChatArgs {

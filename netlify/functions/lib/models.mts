@@ -20,9 +20,12 @@ export interface ModelConfig {
 
 export const MODELS: Record<Provider, ModelConfig> = {
   // 여기서 모델 추가/교체 ↓
+  // ⚠️ OpenAI/Gemini 는 "추론(reasoning)·thinking" 모델(gpt-5, gemini-*-pro 등)로
+  //    바꾸면 첫 토큰이 늦어져 Netlify 함수 타임아웃(ERR_EMPTY_RESPONSE)이 날 수 있습니다.
+  //    빠른 응답이 필요한 수업용으로는 아래처럼 비추론 모델을 권장합니다.
   anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' },
-  openai: { model: 'gpt-5', envKey: 'OPENAI_API_KEY' },
-  gemini: { model: 'gemini-2.5-pro', envKey: 'GEMINI_API_KEY' },
+  openai: { model: 'gpt-4o', envKey: 'OPENAI_API_KEY' },
+  gemini: { model: 'gemini-2.5-flash', envKey: 'GEMINI_API_KEY' },
 }
 
 export const PROVIDERS: Provider[] = ['anthropic', 'openai', 'gemini']

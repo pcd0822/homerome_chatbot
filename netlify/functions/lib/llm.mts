@@ -10,10 +10,11 @@
 import { MODELS, MAX_TOKENS, type Provider } from './models.mts'
 
 export interface WireAttachment {
-  kind: 'image' | 'pdf'
+  kind: 'image' | 'pdf' | 'text'
   mediaType: string
-  data: string // base64 (no data: prefix)
+  data: string // image/pdf: base64 (no data: prefix). text: 사용 안 함('')
   name?: string
+  text?: string // kind 'text'(CSV/XLSX 등)에서 추출한 평문
 }
 
 export interface WireMessage {
@@ -91,11 +92,34 @@ async function readError(res: Response): Promise<string> {
   }
 }
 
+// CSV/XLSX 등 "텍스트로 추출된" 첨부는 어떤 프로바이더든 읽을 수 있도록
+// 프롬프트 본문에 라벨과 함께 덧붙인다(바이너리 업로드 대신 평문 주입).
+function textAttachmentsAppendix(m: WireMessage): string {
+  const texts = (m.attachments ?? []).filter((a) => a.kind === 'text' && a.text)
+  if (!texts.length) return ''
+  return (
+    '\n\n' +
+    texts
+      .map(
+        (a) =>
+          `===== 첨부 파일: ${a.name ?? '파일'} =====\n${a.text}\n===== (${a.name ?? '파일'} 끝) =====`,
+      )
+      .join('\n\n')
+  )
+}
+
+// 본문 + 텍스트 첨부를 합친 최종 사용자 텍스트.
+function combinedText(m: WireMessage): string {
+  return (m.content ?? '') + textAttachmentsAppendix(m)
+}
+
 // 첨부파일이 있는 메시지를 Anthropic content block 배열로 변환.
 function anthropicContent(m: WireMessage): unknown {
-  if (!m.attachments?.length) return m.content
+  const media = (m.attachments ?? []).filter((a) => a.kind === 'image' || a.kind === 'pdf')
+  const text = combinedText(m)
+  if (media.length === 0) return text
   const blocks: unknown[] = []
-  for (const a of m.attachments) {
+  for (const a of media) {
     if (a.kind === 'image') {
       blocks.push({ type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } })
     } else {
@@ -106,7 +130,7 @@ function anthropicContent(m: WireMessage): unknown {
       })
     }
   }
-  blocks.push({ type: 'text', text: m.content || '(첨부 파일을 참고해 답해주세요)' })
+  blocks.push({ type: 'text', text: text || '(첨부 파일을 참고해 답해주세요)' })
   return blocks
 }
 
@@ -145,19 +169,22 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
   }
 }
 
-// OpenAI chat/completions 는 이미지(image_url)만 지원. PDF 는 제외하고 안내를 붙인다.
+// OpenAI chat/completions: 이미지는 image_url, PDF 는 file(파일 입력)로 전달한다.
+// (gpt-4o 등은 PDF 파일 입력을 지원한다.) CSV/XLSX 는 combinedText 로 이미 주입됨.
 function openaiContent(m: WireMessage): unknown {
-  if (!m.attachments?.length) return m.content
-  const images = m.attachments.filter((a) => a.kind === 'image')
-  const hasPdf = m.attachments.some((a) => a.kind === 'pdf')
-  if (images.length === 0 && !hasPdf) return m.content
-  let text = m.content
-  if (hasPdf) {
-    text = (m.content ? m.content + '\n\n' : '') + '(참고: PDF 첨부는 이 모델에서 직접 지원되지 않아 제외되었습니다. 이미지는 첨부되었습니다.)'
-  }
-  const parts: unknown[] = [{ type: 'text', text }]
+  const images = (m.attachments ?? []).filter((a) => a.kind === 'image')
+  const pdfs = (m.attachments ?? []).filter((a) => a.kind === 'pdf')
+  const text = combinedText(m)
+  if (images.length === 0 && pdfs.length === 0) return text
+  const parts: unknown[] = [{ type: 'text', text: text || '(첨부 파일을 참고해 답해주세요)' }]
   for (const a of images) {
     parts.push({ type: 'image_url', image_url: { url: `data:${a.mediaType};base64,${a.data}` } })
+  }
+  for (const a of pdfs) {
+    parts.push({
+      type: 'file',
+      file: { filename: a.name ?? 'document.pdf', file_data: `data:application/pdf;base64,${a.data}` },
+    })
   }
   return parts
 }
@@ -197,8 +224,10 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
   // 이미지·PDF 모두 inlineData(base64) 로 첨부 가능.
   const contents = p.messages.map((m) => {
     const parts: unknown[] = []
-    if (m.content) parts.push({ text: m.content })
+    const text = combinedText(m) // 본문 + CSV/XLSX 등 텍스트 첨부
+    if (text) parts.push({ text })
     for (const a of m.attachments ?? []) {
+      if (a.kind === 'text') continue // 텍스트 첨부는 위 text 로 이미 주입됨
       parts.push({ inlineData: { mimeType: a.mediaType, data: a.data } })
     }
     if (parts.length === 0) parts.push({ text: '' })
@@ -213,6 +242,12 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: p.system }] },
       contents,
+      generationConfig: {
+        maxOutputTokens: MAX_TOKENS,
+        // "thinking"(사고)을 꺼서 첫 토큰을 즉시 흘린다(타임아웃/빈 응답 방지).
+        // ⚠️ thinkingBudget: 0 은 flash 계열에서만 유효. pro 로 바꾸려면 이 줄을 지우세요.
+        thinkingConfig: { thinkingBudget: 0 },
+      },
     }),
   })
   if (!res.ok || !res.body) throw friendly(res.status, 'Gemini', await readError(res))

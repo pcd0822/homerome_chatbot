@@ -15,6 +15,8 @@ import { streamProvider, ProviderError, type WireAttachment, type WireMessage } 
 // base64 첨부 1개당 상한(대략 4MB 원본 ≈ 5.3MB base64). Netlify 함수 요청 본문
 // 한도(~6MB)와 localStorage 안전을 함께 고려한 값.
 const MAX_ATTACH_BASE64 = 6 * 1024 * 1024
+// CSV/XLSX 등에서 추출한 평문 첨부 1개당 상한(대략 200K 글자). 과도한 프롬프트 방지.
+const MAX_ATTACH_TEXT = 200 * 1024
 
 function sanitizeAttachments(raw: unknown): WireAttachment[] | undefined {
   if (raw == null) return undefined
@@ -24,12 +26,21 @@ function sanitizeAttachments(raw: unknown): WireAttachment[] | undefined {
     if (!a || typeof a !== 'object') continue
     const kind = (a as any).kind
     const mediaType = (a as any).mediaType
+    const name = typeof (a as any).name === 'string' ? (a as any).name : undefined
+    if (kind === 'text') {
+      // CSV/XLSX 등: base64 대신 추출된 평문(text)만 받는다.
+      let text = (a as any).text
+      if (typeof text !== 'string' || !text.trim()) continue
+      if (text.length > MAX_ATTACH_TEXT) text = text.slice(0, MAX_ATTACH_TEXT) + '\n…(내용이 길어 일부만 표시됨)'
+      out.push({ kind: 'text', mediaType: typeof mediaType === 'string' ? mediaType : 'text/plain', data: '', text, name })
+      continue
+    }
     const data = (a as any).data
     if ((kind !== 'image' && kind !== 'pdf') || typeof mediaType !== 'string' || typeof data !== 'string') {
       continue
     }
     if (data.length > MAX_ATTACH_BASE64) continue
-    out.push({ kind, mediaType, data, name: typeof (a as any).name === 'string' ? (a as any).name : undefined })
+    out.push({ kind, mediaType, data, name })
   }
   return out.length ? out : undefined
 }
@@ -103,6 +114,10 @@ export default async function handler(req: Request): Promise<Response> {
     async start(controller) {
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
+      // 프로바이더 첫 토큰을 기다리기 전에 바이트를 먼저 흘려 스트림을 확립한다.
+      // (느린 첫 토큰으로 연결이 빈 채 끊겨 ERR_EMPTY_RESPONSE 가 나는 것을 방지.
+      //  ':' 로 시작하는 SSE 주석 라인이라 클라이언트는 무시한다.)
+      controller.enqueue(encoder.encode(': ok\n\n'))
       try {
         for await (const delta of gen) {
           if (delta) send({ delta })
