@@ -7,9 +7,11 @@
 
 import { providerAvailability } from './lib/llm.mts'
 
-// 서버 provider('anthropic') → 클라이언트 provider('claude') 매핑.
+// 서버 provider → 클라이언트 provider 매핑.
+// anthropic=Claude 기본(Sonnet), anthropic_opus=Claude 고급(Opus).
 const TO_CLIENT: Record<string, string> = {
   anthropic: 'claude',
+  anthropic_opus: 'claude_opus',
   openai: 'openai',
   gemini: 'gemini',
 }

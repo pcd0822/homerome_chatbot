@@ -7,7 +7,7 @@
 //   호출자(chat.mts)가 이를 받아 클라이언트로 다시 SSE 로 전달합니다.
 // ============================================================================
 
-import { MODELS, MAX_TOKENS, type Provider } from './models.mts'
+import { MODELS, type Provider } from './models.mts'
 
 export interface WireAttachment {
   kind: 'image' | 'pdf' | 'text'
@@ -27,6 +27,8 @@ export interface StreamParams {
   provider: Provider
   apiKey: string
   model: string
+  /** 응답 최대 출력 토큰(모델별 상한). MODELS[provider].maxTokens 에서 온다. */
+  maxTokens: number
   system: string
   messages: WireMessage[]
 }
@@ -145,7 +147,7 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
     },
     body: JSON.stringify({
       model: p.model,
-      max_tokens: MAX_TOKENS,
+      max_tokens: p.maxTokens,
       system: p.system,
       messages: p.messages.map((m) => ({ role: m.role, content: anthropicContent(m) })),
       stream: true,
@@ -201,7 +203,9 @@ async function* streamOpenAI(p: StreamParams): AsyncGenerator<string> {
       'content-type': 'application/json',
       authorization: `Bearer ${p.apiKey}`,
     },
-    body: JSON.stringify({ model: p.model, messages, stream: true }),
+    // max_tokens: gpt-4o 계열용. (o1/gpt-5 등 추론 모델로 바꾸면 API 가 이 필드 대신
+    // max_completion_tokens 를 요구하므로, 그때는 아래 키 이름을 바꿔야 한다.)
+    body: JSON.stringify({ model: p.model, messages, max_tokens: p.maxTokens, stream: true }),
   })
   if (!res.ok || !res.body) throw friendly(res.status, 'GPT', await readError(res))
 
@@ -243,7 +247,7 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
       systemInstruction: { parts: [{ text: p.system }] },
       contents,
       generationConfig: {
-        maxOutputTokens: MAX_TOKENS,
+        maxOutputTokens: p.maxTokens,
         // 사고(thinking)를 최소로 낮춰 첫 토큰을 빨리 흘린다(타임아웃/느린 응답 방지).
         // ⚠️ Gemini 3.x 는 thinkingBudget 이 아니라 thinkingLevel 을 쓴다('minimal'|'low'|
         //    'medium'|'high'). 3.x 는 사고를 완전히 끌 수 없어 'minimal' 이 최저값이다.
@@ -273,7 +277,9 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
 
 export function streamProvider(p: StreamParams): AsyncGenerator<string> {
   switch (p.provider) {
+    // 기본(Sonnet)·고급(Opus) 모두 Anthropic API. 모델 ID(p.model)만 다르다.
     case 'anthropic':
+    case 'anthropic_opus':
       return streamAnthropic(p)
     case 'openai':
       return streamOpenAI(p)

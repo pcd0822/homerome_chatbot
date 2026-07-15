@@ -3,14 +3,17 @@
 
 import type { Attachment, LlmProvider, Message, ProviderInfo } from '@/types'
 
-// 클라이언트 provider('claude') → 서버 body provider('anthropic') 매핑.
+// 클라이언트 provider → 서버 body provider 매핑.
+// claude=기본(Sonnet)→anthropic, claude_opus=고급(Opus)→anthropic_opus.
 const CLIENT_TO_SERVER: Record<LlmProvider, string> = {
   claude: 'anthropic',
+  claude_opus: 'anthropic_opus',
   openai: 'openai',
   gemini: 'gemini',
 }
 
-const PROVIDER_ORDER: LlmProvider[] = ['claude', 'openai', 'gemini']
+// 기본 선택 우선순위. 맨 앞(claude=Sonnet)이 기본값이 된다.
+const PROVIDER_ORDER: LlmProvider[] = ['claude', 'claude_opus', 'openai', 'gemini']
 
 /** 서버에 어떤 프로바이더 키가 설정됐는지 + 모델명 조회 (키 값은 오지 않음). */
 export async function fetchProviders(): Promise<ProviderInfo> {

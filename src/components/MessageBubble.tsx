@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import Markdown from './Markdown'
 import { extractArtifact, type Artifact } from '@/lib/artifact'
 import type { Message } from '@/types'
@@ -69,7 +70,7 @@ function ArtifactCard({ artifact, onOpen }: { artifact: Artifact; onOpen: () => 
   )
 }
 
-export default function MessageBubble({ message, studentName, streaming, onOpenArtifact }: Props) {
+function MessageBubble({ message, studentName, streaming, onOpenArtifact }: Props) {
   const isUser = message.role === 'user'
 
   // 완료된 어시스턴트 메시지에서만 아티팩트 카드를 노출(스트리밍 중엔 일반 텍스트).
@@ -114,3 +115,9 @@ export default function MessageBubble({ message, studentName, streaming, onOpenA
     </div>
   )
 }
+
+// 스트리밍 중에는 50ms 마다 전체 대화가 갱신되지만, 완료된 말풍선의 message 참조는
+// 그대로 유지된다(App 이 해당 메시지 객체를 재사용). memo 로 감싸면 스트리밍 중인
+// 마지막 말풍선만 다시 렌더되고, 나머지 말풍선의 마크다운 재파싱을 건너뛴다.
+// (대화가 길수록 커지던 버벅임의 핵심 원인 제거.)
+export default memo(MessageBubble)

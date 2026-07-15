@@ -3,42 +3,56 @@
 // ============================================================================
 // - 각 프로바이더가 실제로 호출할 모델 ID 를 한 곳에 모았습니다.
 // - 값이 바뀔 수 있으니(모델 신규 출시 등) 이 파일만 고치면 됩니다.
-// - Claude 기본값은 최상위 모델(claude-opus-4-8)입니다. 비용을 낮추려면
-//   'claude-haiku-4-5' 등으로 바꾸세요. (모델 ID 는 platform.claude.com 참고)
+// - Claude 는 두 갈래입니다: 기본(anthropic = Sonnet, 빠르고 저렴)과
+//   고급(anthropic_opus = Opus, 복잡한 작업용·고비용). 학생이 UI 에서 골라 씁니다.
+//   더 저렴하게 가려면 기본을 'claude-haiku-4-5' 로 바꾸세요.
+// - 두 Claude 슬롯은 같은 키(ANTHROPIC_API_KEY)를 공유합니다.
 // - 서버 환경변수(키)는 여기서 다루지 않습니다: ANTHROPIC_API_KEY /
 //   OPENAI_API_KEY / GEMINI_API_KEY 를 Netlify 대시보드에 등록하세요.
 // ============================================================================
 
-export type Provider = 'anthropic' | 'openai' | 'gemini'
+// 'anthropic' = Claude 기본(Sonnet), 'anthropic_opus' = Claude 고급(Opus).
+// 둘 다 Anthropic API 를 호출하며 같은 키를 쓴다(요청 시 model 만 달라짐).
+export type Provider = 'anthropic' | 'anthropic_opus' | 'openai' | 'gemini'
 
 export interface ModelConfig {
   /** 실제 호출 모델 ID (여기서 추가/교체) */
   model: string
   /** 이 프로바이더의 키를 담은 환경변수 이름 */
   envKey: string
+  /**
+   * 이 모델의 응답 최대 출력 토큰(답변 길이 상한). 여기 값에서 답이 끊긴다.
+   * 각 모델의 실제 출력 한도 안에서 넉넉히 잡는다(모델 한도를 넘기면 API 오류).
+   *   - claude-opus-4-8 : 수만 토큰까지 지원(사실상 여유)
+   *   - gpt-4o          : 출력 상한 16384
+   *   - gemini 3.x flash: 수만 토큰 지원. 구형 2.5 flash 로 되돌리면 8192 로 낮출 것
+   * ⚠️ 값을 키우면 아주 긴 답변의 스트리밍 시간이 늘어 Netlify 함수 실행시간
+   *    한도에 걸릴 수 있다. 긴 답이 중간에 끊기면 이 값을 낮춰라(4096~8192 권장).
+   */
+  maxTokens: number
 }
 
 export const MODELS: Record<Provider, ModelConfig> = {
-  // 여기서 모델 추가/교체 ↓
+  // 여기서 모델 추가/교체 ↓ (model 과 maxTokens 를 함께 조정)
   // ⚠️ OpenAI/Gemini 는 "추론(reasoning)·thinking" 모델(gpt-5, gemini-*-pro 등)로
   //    바꾸면 첫 토큰이 늦어져 Netlify 함수 타임아웃(ERR_EMPTY_RESPONSE)이 날 수 있습니다.
   //    빠른 응답이 필요한 수업용으로는 아래처럼 비추론 모델을 권장합니다.
-  anthropic: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY' },
-  openai: { model: 'gpt-4o', envKey: 'OPENAI_API_KEY' },
+  // Claude 기본(Sonnet): 빠르고 저렴. 대부분의 학생 질문은 이걸로 충분.
+  anthropic: { model: 'claude-sonnet-5', envKey: 'ANTHROPIC_API_KEY', maxTokens: 16000 },
+  // Claude 고급(Opus): 복잡한 추론·긴 문서 작업용. 비용이 높으니 필요한 학생만 선택.
+  anthropic_opus: { model: 'claude-opus-4-8', envKey: 'ANTHROPIC_API_KEY', maxTokens: 16000 },
+  openai: { model: 'gpt-4o', envKey: 'OPENAI_API_KEY', maxTokens: 16000 },
   // gemini-2.5-* 는 2026-07 조기 종료(404). 항상 최신 flash 를 가리키는 별칭을 써서
   // 앞으로 모델이 또 종료돼도 자동으로 최신으로 이어지게 한다(현재 = Gemini 3.5 Flash).
   // 고정 ID 를 원하면 'gemini-3.5-flash'(고품질) 또는 'gemini-3.1-flash-lite'(최저가·최속) 로.
-  gemini: { model: 'gemini-flash-latest', envKey: 'GEMINI_API_KEY' },
+  gemini: { model: 'gemini-flash-latest', envKey: 'GEMINI_API_KEY', maxTokens: 16000 },
 }
 
-export const PROVIDERS: Provider[] = ['anthropic', 'openai', 'gemini']
+export const PROVIDERS: Provider[] = ['anthropic', 'anthropic_opus', 'openai', 'gemini']
 
 export function isProvider(v: unknown): v is Provider {
-  return v === 'anthropic' || v === 'openai' || v === 'gemini'
+  return v === 'anthropic' || v === 'anthropic_opus' || v === 'openai' || v === 'gemini'
 }
-
-// 응답 길이 상한. 챗봇 답변용으로 넉넉하게. (스트리밍이라 타임아웃 부담 적음)
-export const MAX_TOKENS = 4096
 
 // 학생 탐구 보조용 공통 시스템 프롬프트.
 export const SYSTEM_PROMPT =

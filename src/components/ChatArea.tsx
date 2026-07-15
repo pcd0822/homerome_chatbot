@@ -21,7 +21,13 @@ interface Props {
   onSelectProvider: (p: LlmProvider) => void
 }
 
-const PROVIDERS: LlmProvider[] = ['claude', 'openai', 'gemini']
+// 칩 표시 순서. claude(기본=Sonnet) 다음에 claude_opus(고급=Opus).
+const PROVIDERS: LlmProvider[] = ['claude', 'claude_opus', 'openai', 'gemini']
+
+// 칩 마우스오버(tooltip)에 모델 ID 와 함께 보여줄 안내 문구(있는 것만).
+const PROVIDER_HINT: Partial<Record<LlmProvider, string>> = {
+  claude_opus: '복잡한 작업용 · 비용 높음',
+}
 // 파일 1개 상한. localStorage 및 Netlify 함수 요청 한도를 함께 고려.
 const MAX_FILE_BYTES = 4 * 1024 * 1024
 // CSV/XLSX 에서 추출한 평문의 최대 글자 수(localStorage·프롬프트 보호).
@@ -195,13 +201,18 @@ export default function ChatArea({
             const enabled = hasProvider(providerInfo, p)
             const active = selectedProvider === p
             const modelName = providerInfo?.models?.[p]
+            const hint = PROVIDER_HINT[p]
+            // 활성 칩: 안내 문구가 있으면 "문구 · 모델ID", 없으면 모델ID 만.
+            const tooltip = enabled
+              ? [hint, modelName].filter(Boolean).join(' · ')
+              : `${PROVIDER_LABEL[p]} 키 미설정`
             return (
               <button
                 key={p}
                 type="button"
                 onClick={() => onSelectProvider(p)}
                 disabled={!enabled}
-                title={enabled ? modelName : `${PROVIDER_LABEL[p]} 키 미설정`}
+                title={tooltip}
                 className={[
                   'rounded-full px-3 py-1 text-xs font-medium transition',
                   active

@@ -105,6 +105,7 @@ export default async function handler(req: Request): Promise<Response> {
     provider: provider as Provider,
     apiKey,
     model: cfg.model,
+    maxTokens: cfg.maxTokens,
     system: SYSTEM_PROMPT,
     messages,
   })

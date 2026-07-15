@@ -1,6 +1,7 @@
 // 학급 챗봇 전체에서 공유되는 도메인 타입.
 
-export type LlmProvider = 'claude' | 'openai' | 'gemini'
+// 'claude' = 기본(Sonnet), 'claude_opus' = 고급(Opus). 둘 다 Anthropic.
+export type LlmProvider = 'claude' | 'claude_opus' | 'openai' | 'gemini'
 
 export interface ClassInfo {
   grade: number
@@ -79,6 +80,7 @@ export interface StartersFile {
 // /api/providers 로 받아 UI 에 함께 표시한다.
 export const PROVIDER_LABEL: Record<LlmProvider, string> = {
   claude: 'Claude',
+  claude_opus: 'Claude 고급',
   openai: 'GPT',
   gemini: 'Gemini',
 }
