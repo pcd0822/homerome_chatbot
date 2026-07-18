@@ -128,12 +128,24 @@ export default async function handler(req: Request): Promise<Response> {
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (obj: unknown) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
+      let closed = false
+      const enqueue = (bytes: Uint8Array) => {
+        if (closed) return
+        try {
+          controller.enqueue(bytes)
+        } catch {
+          // 이미 닫힌 컨트롤러 — 무시.
+        }
+      }
+      const send = (obj: unknown) => enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
       // 프로바이더 첫 토큰을 기다리기 전에 바이트를 먼저 흘려 스트림을 확립한다.
       // (느린 첫 토큰으로 연결이 빈 채 끊겨 ERR_EMPTY_RESPONSE 가 나는 것을 방지.
       //  ':' 로 시작하는 SSE 주석 라인이라 클라이언트는 무시한다.)
-      controller.enqueue(encoder.encode(': ok\n\n'))
+      enqueue(encoder.encode(': ok\n\n'))
+      // 웹 검색 등으로 첫 토큰까지 오래 걸리면 그 사이 스트림이 idle 해져 프록시/CDN 이
+      // 연결을 끊고 답변이 도중에 잘릴 수 있다. 5초마다 주석 라인을 흘려 연결을 유지한다
+      // (클라이언트는 data: 라인만 처리하므로 이 주석은 무시된다).
+      const heartbeat = setInterval(() => enqueue(encoder.encode(': keep-alive\n\n')), 5000)
       try {
         for await (const delta of gen) {
           if (delta) send({ delta })
@@ -149,6 +161,8 @@ export default async function handler(req: Request): Promise<Response> {
               : '알 수 없는 오류가 발생했습니다.'
         send({ error: message })
       } finally {
+        closed = true
+        clearInterval(heartbeat)
         controller.close()
       }
     },

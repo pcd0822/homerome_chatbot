@@ -151,12 +151,20 @@ function anthropicContent(m: WireMessage): unknown {
 
 // ---- Anthropic (Claude) ----------------------------------------------------
 async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
-  // 웹 검색 서버 도구. 남은 예산(searchMaxUses)이 있을 때만 붙이고, 그 값을
-  // max_uses 로 넘겨 이번 요청의 검색 횟수를 하드하게 제한한다.
-  // (web_search_20260209 은 Claude Sonnet 5 / Opus 4.8 등에서 지원 — 별도 beta 헤더 불필요)
+  // 웹 검색 서버 도구. 남은 예산(searchMaxUses)이 있을 때만 붙인다.
+  //
+  // ⚠️ 기본 도구 web_search_20250305 를 쓴다. 신형 web_search_20260209 는 검색 결과를
+  //    "코드 실행 기반 동적 필터링"으로 거르는데, 이 때문에 (1) 첫 토큰이 크게 느려지고
+  //    (2) 서버 도구 샘플링 루프가 반복 한계(약 10회)에 닿아 stop_reason: pause_turn 으로
+  //    답변이 중간에 잘리는 일이 잦다. 학생용 챗봇엔 동적 필터링이 불필요하므로 기본 도구가
+  //    훨씬 안정적이다(검색 횟수 카운트 usage.server_tool_use.web_search_requests 는 동일).
+  //
+  // 또한 한 요청의 검색을 최대 5회로 제한한다. 서버 루프 반복이 pause 한계에 못 미치게 해
+  // 답변이 잘리는 것을 막는다(하루·모델별 상한 20회는 클라이언트에서 별도로 관리).
+  const perRequest = Math.min(p.searchMaxUses, 5)
   const tools =
     p.searchMaxUses > 0
-      ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: p.searchMaxUses }]
+      ? [{ type: 'web_search_20250305', name: 'web_search', max_uses: perRequest }]
       : undefined
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -176,6 +184,7 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
   })
   if (!res.ok || !res.body) throw friendly(res.status, 'Claude', await readError(res))
 
+  let stopReason: string | undefined
   for await (const data of sseLines(res.body)) {
     if (!data || data === '[DONE]') continue
     let evt: any
@@ -190,9 +199,15 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
       // 실제 수행된 웹 검색 횟수는 누적 usage 로 온다(server_tool_use.web_search_requests).
       const n = evt.usage?.server_tool_use?.web_search_requests
       if (typeof n === 'number') p.stats.searchCount = Math.max(p.stats.searchCount, n)
+      if (typeof evt.delta?.stop_reason === 'string') stopReason = evt.delta.stop_reason
     } else if (evt.type === 'error') {
       throw new ProviderError(500, `Claude 스트리밍 오류: ${evt.error?.message ?? 'unknown'}`)
     }
+  }
+  // 서버 도구 루프가 한계에 닿아 잠시 멈춘 경우(드묾) 답변이 잘린 채 끝난다.
+  // 조용히 멈추지 않도록 짧게 안내한다.
+  if (stopReason === 'pause_turn') {
+    yield '\n\n_(검색이 길어져 여기서 멈췄어요. 질문을 조금 더 좁혀 다시 물어봐 주세요.)_'
   }
 }
 
