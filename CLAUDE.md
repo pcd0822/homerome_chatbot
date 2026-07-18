@@ -35,6 +35,8 @@ ChatArea(입력·첨부) → App.handleSend → src/lib/api.streamChat
   → POST /api/chat (netlify.toml 리다이렉트) → netlify/functions/chat.mts
   → lib/llm.mts streamProvider (프로바이더 REST 스트리밍 직접 호출, SDK 없음)
   → SSE(delta/done/error) 역방향 → App 에서 ~50ms 로 묶어 렌더 → localStorage 저장
+  · done 이벤트엔 이번 요청의 실제 웹 검색 횟수(searchCount)가 함께 실린다(아래 "웹 검색").
+  · 느린 검색으로 스트림이 idle 해도 끊기지 않도록 chat.mts 가 5초마다 `: keep-alive` 주석을 흘린다.
 ```
 
 **상태 관리: 라우터·상태 라이브러리 없음.** `src/App.tsx` 한 곳이 `student` / `conversations` / `activeId` / `selectedProvider` / `artifact` 등 전체 상태를 `useState`로 들고 자식(Sidebar·ChatArea·Canvas)에 슬라이스로 내려준다.
@@ -43,7 +45,9 @@ ChatArea(입력·첨부) → App.handleSend → src/lib/api.streamChat
 
 **모델 교체 지점은 단 하나: `netlify/functions/lib/models.mts`의 `MODELS`.** 여기서 각 프로바이더의 `model` ID와 `maxTokens`(출력 토큰 상한)를 바꾼다. Claude는 `anthropic`(기본=`claude-sonnet-5`)과 `anthropic_opus`(고급=`claude-opus-4-8`) 두 항목이며, 저비용으로 낮추려면 기본을 `claude-haiku-4-5` 로 바꾼다. ⚠️ OpenAI/Gemini를 추론(reasoning/thinking) 모델로 바꾸면 첫 토큰이 늦어져 Netlify 함수 타임아웃(`ERR_EMPTY_RESPONSE`)이 날 수 있다 — 수업용은 비추론 모델 권장. 같은 파일에 공통 `SYSTEM_PROMPT`도 있는데, 여기서 **캔버스용 코드펜스 규칙**을 모델에 지시한다(아래 참조). Gemini는 `thinkingConfig.thinkingLevel`(3.x)을 쓴다 — 구형 2.5 계열로 되돌리면 `thinkingBudget`으로 바꿔야 한다.
 
-**프로바이더 어댑터(`netlify/functions/lib/llm.mts`)**: 세 LLM의 REST 스트리밍을 공통 async generator(텍스트 delta만 흘림)로 정규화한다. `streamProvider`는 `anthropic`·`anthropic_opus` 둘 다 `streamAnthropic`으로 라우팅한다(같은 Anthropic API, `model`만 다름). 세 API의 요청 포맷·첨부 형식이 제각각이라 어댑터별로 분기한다 — Anthropic은 content block, OpenAI는 `image_url`/`file`, Gemini는 `inlineData`. `maxTokens`는 `StreamParams`로 전달되어 각각 `max_tokens`/`max_tokens`/`maxOutputTokens`에 꽂힌다. **CSV/XLSX 첨부는 base64가 아니라 평문(text)으로** 프롬프트 본문에 주입되어(`combinedText`) 세 모델 공통으로 읽힌다.
+**프로바이더 어댑터(`netlify/functions/lib/llm.mts`)**: 세 LLM의 REST 스트리밍을 공통 async generator(텍스트 delta만 흘림)로 정규화한다. `streamProvider`는 `anthropic`·`anthropic_opus` 둘 다 `streamAnthropic`으로 라우팅한다(같은 Anthropic API, `model`만 다름). 세 API의 요청 포맷·첨부 형식이 제각각이라 어댑터별로 분기한다 — Anthropic은 `/v1/messages` content block, **OpenAI는 `/v1/responses`(Responses API)의 `input_text`/`input_image`/`input_file`**(웹 검색 도구를 쓰려면 chat/completions 가 아니라 Responses API 가 필요해서 전환함), Gemini는 `inlineData`. `maxTokens`는 `StreamParams`로 전달되어 각각 `max_tokens`/`max_output_tokens`/`maxOutputTokens`에 꽂힌다. **CSV/XLSX 첨부는 base64가 아니라 평문(text)으로** 프롬프트 본문에 주입되어(`combinedText`) 세 모델 공통으로 읽힌다.
+
+**웹 검색 (`llm.mts` + `chat.mts` + `storage.ts` + `App.tsx`)**: 세 모델 모두 실시간 웹 검색을 지원한다. 어댑터가 프로바이더별 검색 도구를 붙이고 실제 검색 횟수를 `StreamParams.stats.searchCount`에 기록한다 — **Claude는 `web_search_20250305`**(기본 도구. 신형 `web_search_20260209`은 내부 코드 실행 동적 필터링 때문에 느리고 `stop_reason: pause_turn`으로 답변이 잘려 쓰지 않는다), **OpenAI는 Responses API `web_search` 도구**, **Gemini는 `google_search` 그라운딩**. 검색 횟수 카운트 출처: Claude=`usage.server_tool_use.web_search_requests`, OpenAI=`web_search_call` 아이템 수, Gemini=`groundingMetadata.webSearchQueries` 길이. **검색 상한 = 학생 코드·모델별 하루 20회**(`SEARCH_LIMIT_PER_MODEL`, `storage.ts`). 클라이언트가 남은 예산(`20 − 오늘 사용량`)을 `searchMaxUses`로 서버에 보내고, 서버는 `[0,20]`으로 클램프해 도구 부착 여부·`max_uses`를 정한다(0이면 도구 미부착 = 그 모델 검색 비활성). Claude는 여기에 더해 **요청당 최대 5회**로 잘라 서버 루프가 pause 한계에 닿는 것을 막는다. 누적은 서버 DB 없이 `localStorage`에만 두는 소프트 제한이며(학번은 여전히 서버로 안 보냄), **매일 로컬 자정에 리셋된다**(`chatbot.searchUsage.{studentId}` = `{date, counts}`, 날짜가 오늘과 다르면 0 취급). 검색 도구를 바꾸거나 추가할 땐 이 4개 파일 + 카운트 출처를 함께 손봐야 한다.
 
 **첨부파일 처리 (`src/components/ChatArea.tsx`)**: 이미지·PDF는 브라우저에서 base64로, CSV·XLSX는 **SheetJS(`xlsx`)로 브라우저에서 평문 추출**(`xlsxToText`) 후 `kind:'text'` Attachment로 만든다. `Attachment`(`src/types/index.ts`)는 `image`/`pdf`/`text` 세 종류이고, base64/추출평문 모두 localStorage에 저장된다. 인식 지원: 이미지=세 모델, PDF=Claude·Gemini(GPT는 파일입력), CSV/XLSX=평문 주입이라 전 모델.
 
@@ -51,7 +55,7 @@ ChatArea(입력·첨부) → App.handleSend → src/lib/api.streamChat
 
 **로그인 = 학번 + 개인 코드 2-factor** (`src/lib/roster.ts`, 명부는 `src/data/roster.json`에 하드코딩). 이름은 인증에 쓰지 않고 환영 인사(`getVocativeName`으로 호격 조사 처리)에만 쓴다. 인증 통과 후 저장되는 `Student`에는 `code`를 담지 않는다.
 
-**localStorage 스키마(`src/lib/storage.ts`)**: `chatbot.currentStudent`, `chatbot.selectedProvider`, `chatbot.uiState.sidebarCollapsed`, `chatbot.history.{studentId}`(학생별 대화 배열). 모든 접근은 quota/SecurityError를 흡수하는 `safeGet/safeSet` 래퍼를 거친다.
+**localStorage 스키마(`src/lib/storage.ts`)**: `chatbot.currentStudent`, `chatbot.selectedProvider`, `chatbot.uiState.sidebarCollapsed`, `chatbot.history.{studentId}`(학생별 대화 배열), `chatbot.searchUsage.{studentId}`(하루 웹 검색 사용량 = `{date, counts:{provider:n}}`, 매일 로컬 자정 리셋). 모든 접근은 quota/SecurityError를 흡수하는 `safeGet/safeSet` 래퍼를 거친다. "내 데이터 초기화"(`clearStudentData`)는 대화·로그인·검색 사용량을 함께 지운다.
 
 ## 배포·환경 (Netlify)
 
@@ -62,11 +66,12 @@ ChatArea(입력·첨부) → App.handleSend → src/lib/api.streamChat
 
 ## 주의점
 
-- **함수 타임아웃 vs 느린 첫 토큰**: `chat.mts`는 프로바이더 첫 토큰 전에 `: ok` SSE 주석을 먼저 흘려 빈 연결 종료(`ERR_EMPTY_RESPONSE`)를 막는다. 모델을 느린(추론) 것으로 바꿀 때 이 문제가 재발할 수 있다.
+- **함수 타임아웃 vs 느린 첫 토큰**: `chat.mts`는 프로바이더 첫 토큰 전에 `: ok` SSE 주석을 먼저 흘려 빈 연결 종료(`ERR_EMPTY_RESPONSE`)를 막고, 이후 **5초마다 `: keep-alive` 주석**을 흘려 느린 웹 검색 중 idle 로 연결이 끊겨 답변이 잘리는 것을 막는다(클라이언트는 `data:` 라인만 처리하므로 주석은 무시). 모델을 느린(추론) 것으로 바꾸거나 검색이 매우 오래 걸리면 여전히 Netlify 함수 실행시간 한도(~10초)에 걸릴 수 있다 — 그땐 Claude 요청당 검색 횟수를 5→3으로 낮추거나 함수 타임아웃 상향(유료)을 고려.
+- **Claude 웹 검색은 반드시 `web_search_20250305`(기본 도구)로.** 신형 `web_search_20260209`은 내부적으로 코드 실행 동적 필터링을 돌려 (1) 첫 토큰이 크게 느려지고 (2) 서버 도구 루프가 `stop_reason: pause_turn`에 자주 닿아 답변이 중간에 잘린다(기본 Sonnet은 출력 전 멈춤, 고급 Opus는 나오다 잘림). 학생용엔 동적 필터링이 불필요하니 기본 도구가 안정적이다. Claude 어댑터는 pause_turn 을 감지하면 짧은 안내 문구를 덧붙이고, 요청당 검색을 `min(남은예산, 5)`로 잘라 pause 를 예방한다.
 - **첨부 크기 상한**은 서버(`chat.mts`)에서도 재검증한다: base64 첨부 ~6MB(`MAX_ATTACH_BASE64`), 텍스트 첨부 ~200K자(`MAX_ATTACH_TEXT`). 클라(`ChatArea`)에도 별도 상한이 있으니 값을 바꾸면 양쪽을 맞출 것.
 - **스트리밍 렌더링**은 토큰마다 하지 않고 `App.tsx`에서 ~50ms로 묶는다(매 토큰 setState + 마크다운 재파싱 방지). 스트리밍 중엔 평문, 완료 시 마크다운으로 그린다. localStorage 저장은 스트리밍 종료 후 한 번만.
 - **`MessageBubble`은 `React.memo`로 감싸져 있다.** 스트리밍 중 50ms마다 전체 대화가 갱신돼도 완료된 말풍선은 `message` 참조가 유지되어 재렌더(=마크다운 재파싱)를 건너뛴다. 이 memo를 벗기면 대화가 길수록 스트리밍이 버벅인다. 기본 shallow 비교가 성립하려면 `message`/`studentName`/`streaming`/`onOpenArtifact` 참조가 안정적이어야 한다(`onOpenArtifact`=App의 `setArtifact`).
-- **출력 토큰 상한은 프로바이더별 `maxTokens`(`models.mts`)** 이다. 예전 단일 `MAX_TOKENS` 상수는 제거됐고 Claude·Gemini엔 `max_tokens`/`maxOutputTokens`, OpenAI엔 `max_tokens`로 모두 적용된다. 값을 키우면 아주 긴 답변의 스트리밍 시간이 늘어 Netlify 실행시간 한도에 걸릴 수 있으니, 긴 답이 끊기면 이 값을 낮춘다. (OpenAI를 gpt-5/o1 등 추론 모델로 바꾸면 `max_tokens` 대신 `max_completion_tokens`를 요구한다.)
+- **출력 토큰 상한은 프로바이더별 `maxTokens`(`models.mts`)** 이다. 예전 단일 `MAX_TOKENS` 상수는 제거됐고 Claude엔 `max_tokens`, **OpenAI엔 `max_output_tokens`(Responses API)**, Gemini엔 `maxOutputTokens`로 적용된다. 값을 키우면 아주 긴 답변의 스트리밍 시간이 늘어 Netlify 실행시간 한도에 걸릴 수 있으니, 긴 답이 끊기면 이 값을 낮춘다. (OpenAI는 이제 chat/completions 가 아니라 Responses API 를 쓰므로 `max_completion_tokens`가 아니라 `max_output_tokens` 이며, 추론 모델로 바꿔도 필드명은 그대로다.)
 - **로컬 타입체크의 `xlsx` 에러는 환경 문제다.** `npm run typecheck`가 `ChatArea.tsx`의 `xlsx` 모듈을 못 찾는 2건 에러는 `node_modules/xlsx` 미설치 때문(`npm install`로 해소). Netlify는 배포 시 설치하므로 빌드가 통과한다.
 
 ## 작업 내역 (2026-07 세션)
@@ -79,3 +84,11 @@ ChatArea(입력·첨부) → App.handleSend → src/lib/api.streamChat
    - 비용: Sonnet 5는 Opus 4.8 대비 입·출력 40% 저렴(도입 프로모 기간 60%), Haiku 4.5는 80% 저렴.
 4. **모델 칩 툴팁** — `ChatArea.tsx`의 `PROVIDER_HINT` 맵으로 활성 칩 마우스오버에 "안내문구 · 모델ID"를 표시(현재 `claude_opus` = "복잡한 작업용 · 비용 높음 · claude-opus-4-8"). 문구가 없는 칩은 모델 ID만 표시.
 5. **README 동기화** — "모델 교체 방법" 절을 2-슬롯 Claude + `maxTokens` 구조로 갱신.
+
+## 작업 내역 (2026-07 웹 검색 세션)
+
+1. **세 모델 웹 검색 도입** — Claude(`web_search_20250305`)·GPT(Responses API `web_search`)·Gemini(`google_search` 그라운딩)에 실시간 검색 추가. `StreamParams`에 `searchMaxUses`·`stats` 추가, 실제 검색 횟수를 카운트해 `done` SSE 로 반환. (`llm.mts`, `chat.mts`, `api.ts`) — 위 "웹 검색" 절 참고.
+2. **OpenAI 를 Responses API 로 전환** — 웹 검색을 쓰려면 chat/completions 로는 안 돼서 `/v1/responses` 로 옮김. 첨부는 `input_text`/`input_image`/`input_file`, 상한은 `max_output_tokens`. (`llm.mts`)
+3. **학생·모델별 하루 20회 검색 상한** — `chatbot.searchUsage.{studentId}`에 날짜별 사용량 저장, 남은 예산을 `searchMaxUses`로 전달. **매일 로컬 자정 리셋.** 서버는 `[0,20]` 클램프, 학번은 여전히 서버 미전송(소프트 제한). (`storage.ts`, `api.ts`, `App.tsx`, `chat.mts`)
+4. **Claude 멈춤/잘림 수정** — 신형 `web_search_20260209`(코드 실행 동적 필터링)이 느리고 `pause_turn`으로 답변을 잘라, 기본 도구 `web_search_20250305`로 교체 + 요청당 검색 `min(예산,5)` 제한 + `pause_turn` 감지 시 안내. (`llm.mts`)
+5. **하트비트 keep-alive** — 느린 검색 중 스트림 idle 로 연결이 끊기지 않도록 `chat.mts`가 5초마다 `: keep-alive` 주석 전송. (`chat.mts`)
