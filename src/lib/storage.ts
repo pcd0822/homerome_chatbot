@@ -9,7 +9,7 @@
 //   chatbot.selectedProvider            마지막으로 선택한 모델 제공자
 //   chatbot.uiState.sidebarCollapsed    사이드바 접힘 여부
 //   chatbot.history.{studentId}         학생별 대화 스레드 배열
-//   chatbot.searchUsage.{studentId}     학생별·모델별 웹 검색 누적 횟수(Record<provider, n>)
+//   chatbot.searchUsage.{studentId}     학생별 웹 검색 "그날" 사용량({date, counts:{provider:n}})
 
 import type { Conversation, LlmProvider, Student } from '@/types'
 
@@ -21,11 +21,25 @@ const KEY = {
   searchUsageFor: (studentId: string) => `chatbot.searchUsage.${studentId}`,
 } as const
 
-// 학생 코드·모델별 웹 검색 누적 상한. 이 값에 도달하면 그 모델의 검색이 비활성화된다.
-// (localStorage 기반 소프트 제한 — 학생이 저장소를 지우면 리셋됨)
+// 학생 코드·모델별 "하루" 웹 검색 상한. 이 값에 도달하면 그 모델의 검색이 비활성화되고,
+// 매일 자정(로컬 시간)에 자동으로 0 으로 리셋된다.
+// (localStorage 기반 소프트 제한 — 학생이 저장소를 지우면 그 전에도 리셋됨)
 export const SEARCH_LIMIT_PER_MODEL = 20
 
-type SearchUsage = Partial<Record<LlmProvider, number>>
+// 날짜별로 사용량을 분리 저장한다. 저장된 date 가 오늘과 다르면 전날 것으로 보고 0 취급.
+interface SearchUsage {
+  date: string // 로컬 기준 YYYY-MM-DD
+  counts: Partial<Record<LlmProvider, number>>
+}
+
+// 로컬 시간 기준 오늘 날짜 키(YYYY-MM-DD). UTC 가 아니라 학생 기기의 자정 기준으로 끊는다.
+function todayKey(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 function safeGet<T>(key: string): T | null {
   try {
@@ -92,19 +106,25 @@ export const storage = {
     safeRemove(KEY.historyFor(studentId))
   },
 
-  // ---- 학생별·모델별 웹 검색 누적 횟수 ----
+  // ---- 학생별·모델별 "오늘" 웹 검색 사용량(매일 자정 리셋) ----
   getSearchUsage(studentId: string, provider: LlmProvider): number {
     const usage = safeGet<SearchUsage>(KEY.searchUsageFor(studentId))
-    return usage?.[provider] ?? 0
+    // 저장된 날짜가 오늘이 아니면 어제(이전) 것 → 오늘 사용량은 0.
+    if (!usage || usage.date !== todayKey()) return 0
+    return usage.counts?.[provider] ?? 0
   },
-  // 이번 요청에서 수행한 검색 횟수를 누적에 더한다. 새 누적값을 반환.
+  // 이번 요청에서 수행한 검색 횟수를 오늘 사용량에 더한다. 새 값(오늘 누적)을 반환.
   addSearchUsage(studentId: string, provider: LlmProvider, count: number): number {
     if (!Number.isFinite(count) || count <= 0) {
       return this.getSearchUsage(studentId, provider)
     }
-    const usage = safeGet<SearchUsage>(KEY.searchUsageFor(studentId)) ?? {}
-    const next = (usage[provider] ?? 0) + Math.floor(count)
-    usage[provider] = next
+    const today = todayKey()
+    const stored = safeGet<SearchUsage>(KEY.searchUsageFor(studentId))
+    // 날짜가 바뀌었으면(자정 넘김) 새 날짜로 초기화하고 다시 센다.
+    const usage: SearchUsage =
+      stored && stored.date === today ? stored : { date: today, counts: {} }
+    const next = (usage.counts[provider] ?? 0) + Math.floor(count)
+    usage.counts[provider] = next
     safeSet(KEY.searchUsageFor(studentId), usage)
     return next
   },
