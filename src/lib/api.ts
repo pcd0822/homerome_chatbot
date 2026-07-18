@@ -51,6 +51,10 @@ export interface StreamChatArgs {
   messages: Message[]
   onDelta: (text: string) => void
   signal?: AbortSignal
+  /** 이번 요청에서 허용할 웹 검색 최대 횟수(학생·모델별 남은 예산). 0 이면 검색 비활성. */
+  searchMaxUses?: number
+  /** 스트림 종료 시 이번 요청에서 실제 수행된 검색 횟수 등을 전달. */
+  onMeta?: (meta: { searchCount: number }) => void
 }
 
 /**
@@ -58,7 +62,7 @@ export interface StreamChatArgs {
  * 서버가 SSE 대신 JSON 에러를 주면(키 누락 등) Error 로 던진다.
  */
 export async function streamChat(args: StreamChatArgs): Promise<string> {
-  const { provider, messages, onDelta, signal } = args
+  const { provider, messages, onDelta, signal, searchMaxUses, onMeta } = args
 
   const wireMessages = messages.map((m) => ({
     role: m.role,
@@ -69,7 +73,11 @@ export async function streamChat(args: StreamChatArgs): Promise<string> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ provider: CLIENT_TO_SERVER[provider], messages: wireMessages }),
+    body: JSON.stringify({
+      provider: CLIENT_TO_SERVER[provider],
+      messages: wireMessages,
+      searchMaxUses: searchMaxUses ?? 0,
+    }),
     signal,
   })
 
@@ -92,7 +100,7 @@ export async function streamChat(args: StreamChatArgs): Promise<string> {
 
   const handlePayload = (payload: string) => {
     if (!payload) return
-    let evt: { delta?: string; done?: boolean; error?: string }
+    let evt: { delta?: string; done?: boolean; error?: string; searchCount?: number }
     try {
       evt = JSON.parse(payload)
     } catch {
@@ -102,6 +110,9 @@ export async function streamChat(args: StreamChatArgs): Promise<string> {
     if (typeof evt.delta === 'string') {
       full += evt.delta
       onDelta(evt.delta)
+    }
+    if (evt.done) {
+      onMeta?.({ searchCount: typeof evt.searchCount === 'number' ? evt.searchCount : 0 })
     }
   }
 

@@ -3,7 +3,7 @@ import StudentLoginModal from '@/components/StudentLoginModal'
 import Sidebar from '@/components/Sidebar'
 import ChatArea from '@/components/ChatArea'
 import Canvas from '@/components/Canvas'
-import { storage, newId } from '@/lib/storage'
+import { storage, newId, SEARCH_LIMIT_PER_MODEL } from '@/lib/storage'
 import { getClassLabel } from '@/lib/roster'
 import { extractArtifact, type Artifact } from '@/lib/artifact'
 import { fetchProviders, hasProvider, pickInitialProvider, streamChat } from '@/lib/api'
@@ -264,14 +264,23 @@ export default function App() {
       }, 50)
     }
 
+    // 웹 검색 남은 예산: 학생 코드·모델별 누적 상한(20회)에서 사용량을 뺀 값.
+    // 0 이면 서버가 검색 도구를 붙이지 않아 이 모델의 검색이 비활성화된다.
+    const searchUsed = storage.getSearchUsage(student.studentId, provider)
+    const searchMaxUses = Math.max(0, SEARCH_LIMIT_PER_MODEL - searchUsed)
+
     try {
       await streamChat({
         provider,
         messages: apiMessages,
         signal: controller.signal,
+        searchMaxUses,
         onDelta: (t) => {
           acc += t
           scheduleFlush()
+        },
+        onMeta: ({ searchCount }) => {
+          if (searchCount > 0) storage.addSearchUsage(student.studentId, provider, searchCount)
         },
       })
     } catch (err) {

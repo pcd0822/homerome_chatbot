@@ -9,6 +9,7 @@
 //   chatbot.selectedProvider            마지막으로 선택한 모델 제공자
 //   chatbot.uiState.sidebarCollapsed    사이드바 접힘 여부
 //   chatbot.history.{studentId}         학생별 대화 스레드 배열
+//   chatbot.searchUsage.{studentId}     학생별·모델별 웹 검색 누적 횟수(Record<provider, n>)
 
 import type { Conversation, LlmProvider, Student } from '@/types'
 
@@ -17,7 +18,14 @@ const KEY = {
   selectedProvider: 'chatbot.selectedProvider',
   sidebarCollapsed: 'chatbot.uiState.sidebarCollapsed',
   historyFor: (studentId: string) => `chatbot.history.${studentId}`,
+  searchUsageFor: (studentId: string) => `chatbot.searchUsage.${studentId}`,
 } as const
+
+// 학생 코드·모델별 웹 검색 누적 상한. 이 값에 도달하면 그 모델의 검색이 비활성화된다.
+// (localStorage 기반 소프트 제한 — 학생이 저장소를 지우면 리셋됨)
+export const SEARCH_LIMIT_PER_MODEL = 20
+
+type SearchUsage = Partial<Record<LlmProvider, number>>
 
 function safeGet<T>(key: string): T | null {
   try {
@@ -84,10 +92,28 @@ export const storage = {
     safeRemove(KEY.historyFor(studentId))
   },
 
-  // ---- "내 데이터 초기화"(명세 5장): 현재 학생의 기록 + 로그인만 삭제 ----
+  // ---- 학생별·모델별 웹 검색 누적 횟수 ----
+  getSearchUsage(studentId: string, provider: LlmProvider): number {
+    const usage = safeGet<SearchUsage>(KEY.searchUsageFor(studentId))
+    return usage?.[provider] ?? 0
+  },
+  // 이번 요청에서 수행한 검색 횟수를 누적에 더한다. 새 누적값을 반환.
+  addSearchUsage(studentId: string, provider: LlmProvider, count: number): number {
+    if (!Number.isFinite(count) || count <= 0) {
+      return this.getSearchUsage(studentId, provider)
+    }
+    const usage = safeGet<SearchUsage>(KEY.searchUsageFor(studentId)) ?? {}
+    const next = (usage[provider] ?? 0) + Math.floor(count)
+    usage[provider] = next
+    safeSet(KEY.searchUsageFor(studentId), usage)
+    return next
+  },
+
+  // ---- "내 데이터 초기화"(명세 5장): 현재 학생의 기록 + 로그인 + 검색 누적 삭제 ----
   // 비밀은 환경 변수라 학생 PC에 없음.
   clearStudentData(studentId: string): void {
     safeRemove(KEY.historyFor(studentId))
+    safeRemove(KEY.searchUsageFor(studentId))
     safeRemove(KEY.currentStudent)
   },
 }

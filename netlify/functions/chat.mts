@@ -17,6 +17,9 @@ import { streamProvider, ProviderError, type WireAttachment, type WireMessage } 
 const MAX_ATTACH_BASE64 = 6 * 1024 * 1024
 // CSV/XLSX 등에서 추출한 평문 첨부 1개당 상한(대략 200K 글자). 과도한 프롬프트 방지.
 const MAX_ATTACH_TEXT = 200 * 1024
+// 웹 검색 요청당 하드 상한(서버 방어선). 클라이언트가 학생·모델별 누적 상한의 남은
+// 예산을 계산해 searchMaxUses 로 보내지만, 서버에서도 이 값으로 한 번 더 자른다.
+const MAX_SEARCH_USES = 20
 
 function sanitizeAttachments(raw: unknown): WireAttachment[] | undefined {
   if (raw == null) return undefined
@@ -48,6 +51,13 @@ function sanitizeAttachments(raw: unknown): WireAttachment[] | undefined {
 interface ChatBody {
   provider?: unknown
   messages?: unknown
+  searchMaxUses?: unknown
+}
+
+// 웹 검색 남은 예산을 [0, MAX_SEARCH_USES] 정수로 정규화.
+function sanitizeSearchMaxUses(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0
+  return Math.max(0, Math.min(MAX_SEARCH_USES, Math.floor(raw)))
 }
 
 function json(status: number, data: unknown): Response {
@@ -101,6 +111,9 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   // 프로바이더로는 선택된 모델과 메시지 배열만 전달한다(사용자 식별정보 없음).
+  const searchMaxUses = sanitizeSearchMaxUses(body.searchMaxUses)
+  // 어댑터가 실제 수행한 검색 횟수를 여기에 기록한다(스트림 종료 후 클라로 반환).
+  const stats = { searchCount: 0 }
   const gen = streamProvider({
     provider: provider as Provider,
     apiKey,
@@ -108,6 +121,8 @@ export default async function handler(req: Request): Promise<Response> {
     maxTokens: cfg.maxTokens,
     system: SYSTEM_PROMPT,
     messages,
+    searchMaxUses,
+    stats,
   })
 
   const encoder = new TextEncoder()
@@ -123,7 +138,8 @@ export default async function handler(req: Request): Promise<Response> {
         for await (const delta of gen) {
           if (delta) send({ delta })
         }
-        send({ done: true })
+        // 이번 요청에서 실제 수행된 검색 횟수를 함께 알려 클라이언트 누적 카운터에 반영.
+        send({ done: true, searchCount: stats.searchCount })
       } catch (err) {
         const message =
           err instanceof ProviderError

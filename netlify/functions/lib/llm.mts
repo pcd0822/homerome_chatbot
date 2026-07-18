@@ -31,6 +31,19 @@ export interface StreamParams {
   maxTokens: number
   system: string
   messages: WireMessage[]
+  /**
+   * 이번 요청에서 허용할 웹 검색 최대 횟수. 0 이면 검색 도구를 아예 붙이지 않는다.
+   * 학생 코드·모델별 누적 상한(20회)의 "남은 예산"을 클라이언트가 계산해 넘긴다.
+   * - Claude 는 이 값을 도구의 max_uses 로 그대로 전달(요청당 하드 상한).
+   * - OpenAI/Gemini 는 검색 횟수를 요청 단위로 제한하는 파라미터가 없어, 0 이면
+   *   도구 미부착으로만 막는다(남은 예산이 0 이 되면 다음 요청부터 검색 불가).
+   */
+  searchMaxUses: number
+  /**
+   * 어댑터가 이번 요청에서 실제로 수행한 웹 검색 횟수를 기록하는 가변 객체.
+   * 호출자(chat.mts)가 스트림 종료 후 읽어 클라이언트로 되돌려준다(누적 카운터 반영).
+   */
+  stats: { searchCount: number }
 }
 
 // 사용자에게 보여줄 친절한 에러. HTTP 상태를 구분해 메시지를 만든다.
@@ -138,6 +151,13 @@ function anthropicContent(m: WireMessage): unknown {
 
 // ---- Anthropic (Claude) ----------------------------------------------------
 async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
+  // 웹 검색 서버 도구. 남은 예산(searchMaxUses)이 있을 때만 붙이고, 그 값을
+  // max_uses 로 넘겨 이번 요청의 검색 횟수를 하드하게 제한한다.
+  // (web_search_20260209 은 Claude Sonnet 5 / Opus 4.8 등에서 지원 — 별도 beta 헤더 불필요)
+  const tools =
+    p.searchMaxUses > 0
+      ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: p.searchMaxUses }]
+      : undefined
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -150,6 +170,7 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
       max_tokens: p.maxTokens,
       system: p.system,
       messages: p.messages.map((m) => ({ role: m.role, content: anthropicContent(m) })),
+      tools,
       stream: true,
     }),
   })
@@ -165,47 +186,68 @@ async function* streamAnthropic(p: StreamParams): AsyncGenerator<string> {
     }
     if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
       yield evt.delta.text as string
+    } else if (evt.type === 'message_delta') {
+      // 실제 수행된 웹 검색 횟수는 누적 usage 로 온다(server_tool_use.web_search_requests).
+      const n = evt.usage?.server_tool_use?.web_search_requests
+      if (typeof n === 'number') p.stats.searchCount = Math.max(p.stats.searchCount, n)
     } else if (evt.type === 'error') {
       throw new ProviderError(500, `Claude 스트리밍 오류: ${evt.error?.message ?? 'unknown'}`)
     }
   }
 }
 
-// OpenAI chat/completions: 이미지는 image_url, PDF 는 file(파일 입력)로 전달한다.
-// (gpt-4o 등은 PDF 파일 입력을 지원한다.) CSV/XLSX 는 combinedText 로 이미 주입됨.
-function openaiContent(m: WireMessage): unknown {
-  const images = (m.attachments ?? []).filter((a) => a.kind === 'image')
-  const pdfs = (m.attachments ?? []).filter((a) => a.kind === 'pdf')
-  const text = combinedText(m)
-  if (images.length === 0 && pdfs.length === 0) return text
-  const parts: unknown[] = [{ type: 'text', text: text || '(첨부 파일을 참고해 답해주세요)' }]
-  for (const a of images) {
-    parts.push({ type: 'image_url', image_url: { url: `data:${a.mediaType};base64,${a.data}` } })
-  }
-  for (const a of pdfs) {
-    parts.push({
-      type: 'file',
-      file: { filename: a.name ?? 'document.pdf', file_data: `data:application/pdf;base64,${a.data}` },
-    })
-  }
-  return parts
+// OpenAI Responses API 의 input 항목으로 변환.
+// 웹 검색 도구(web_search)를 쓰려면 chat/completions 가 아니라 Responses API 가 필요하다.
+// - user: 텍스트는 input_text, 이미지는 input_image, PDF 는 input_file 로 넣는다.
+//   (CSV/XLSX 는 combinedText 로 이미 본문에 주입됨)
+// - assistant: 지난 답변은 문자열로 그대로 전달.
+function openaiInput(messages: WireMessage[]): unknown[] {
+  return messages.map((m) => {
+    if (m.role === 'assistant') {
+      return { role: 'assistant', content: m.content ?? '' }
+    }
+    const text = combinedText(m)
+    const media = (m.attachments ?? []).filter((a) => a.kind === 'image' || a.kind === 'pdf')
+    if (media.length === 0) {
+      return { role: 'user', content: text }
+    }
+    const parts: unknown[] = [
+      { type: 'input_text', text: text || '(첨부 파일을 참고해 답해주세요)' },
+    ]
+    for (const a of media) {
+      if (a.kind === 'image') {
+        parts.push({ type: 'input_image', image_url: `data:${a.mediaType};base64,${a.data}` })
+      } else {
+        parts.push({
+          type: 'input_file',
+          filename: a.name ?? 'document.pdf',
+          file_data: `data:application/pdf;base64,${a.data}`,
+        })
+      }
+    }
+    return { role: 'user', content: parts }
+  })
 }
 
 // ---- OpenAI (GPT) ----------------------------------------------------------
 async function* streamOpenAI(p: StreamParams): AsyncGenerator<string> {
-  const messages = [
-    { role: 'system', content: p.system },
-    ...p.messages.map((m) => ({ role: m.role, content: openaiContent(m) })),
-  ]
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  // 남은 예산이 있을 때만 웹 검색 도구를 붙인다(요청당 횟수 제한 파라미터는 없음 →
+  // 예산이 0 이 되면 도구 미부착으로만 검색을 막는다).
+  const tools = p.searchMaxUses > 0 ? [{ type: 'web_search' }] : undefined
+  const res = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${p.apiKey}`,
     },
-    // max_tokens: gpt-4o 계열용. (o1/gpt-5 등 추론 모델로 바꾸면 API 가 이 필드 대신
-    // max_completion_tokens 를 요구하므로, 그때는 아래 키 이름을 바꿔야 한다.)
-    body: JSON.stringify({ model: p.model, messages, max_tokens: p.maxTokens, stream: true }),
+    body: JSON.stringify({
+      model: p.model,
+      instructions: p.system,
+      input: openaiInput(p.messages),
+      tools,
+      max_output_tokens: p.maxTokens,
+      stream: true,
+    }),
   })
   if (!res.ok || !res.body) throw friendly(res.status, 'GPT', await readError(res))
 
@@ -217,8 +259,22 @@ async function* streamOpenAI(p: StreamParams): AsyncGenerator<string> {
     } catch {
       continue
     }
-    const delta = evt.choices?.[0]?.delta?.content
-    if (typeof delta === 'string' && delta) yield delta
+    switch (evt.type) {
+      case 'response.output_text.delta':
+        if (typeof evt.delta === 'string' && evt.delta) yield evt.delta
+        break
+      case 'response.output_item.added':
+        // 웹 검색 호출이 하나 시작될 때마다 1 회로 카운트.
+        if (evt.item?.type === 'web_search_call') p.stats.searchCount++
+        break
+      case 'error':
+      case 'response.error':
+      case 'response.failed': {
+        const msg =
+          evt.response?.error?.message ?? evt.error?.message ?? evt.message ?? 'unknown'
+        throw new ProviderError(500, `GPT 스트리밍 오류: ${msg}`)
+      }
+    }
   }
 }
 
@@ -237,6 +293,8 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
     if (parts.length === 0) parts.push({ text: '' })
     return { role: m.role === 'assistant' ? 'model' : 'user', parts }
   })
+  // Google 검색 그라운딩. 남은 예산이 있을 때만 붙인다(요청당 횟수 제한 파라미터는 없음).
+  const tools = p.searchMaxUses > 0 ? [{ google_search: {} }] : undefined
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(p.model)}` +
     `:streamGenerateContent?alt=sse&key=${encodeURIComponent(p.apiKey)}`
@@ -246,6 +304,7 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: p.system }] },
       contents,
+      tools,
       generationConfig: {
         maxOutputTokens: p.maxTokens,
         // 사고(thinking)를 최소로 낮춰 첫 토큰을 빨리 흘린다(타임아웃/느린 응답 방지).
@@ -271,6 +330,12 @@ async function* streamGemini(p: StreamParams): AsyncGenerator<string> {
       for (const part of parts) {
         if (typeof part.text === 'string' && part.text) yield part.text
       }
+    }
+    // 실제 검색 횟수: groundingMetadata.webSearchQueries(발행한 검색어 목록) 길이.
+    // 보통 마지막 청크에 한 번 실려 오므로 최댓값으로 반영한다.
+    const queries = evt.candidates?.[0]?.groundingMetadata?.webSearchQueries
+    if (Array.isArray(queries)) {
+      p.stats.searchCount = Math.max(p.stats.searchCount, queries.length)
     }
   }
 }
